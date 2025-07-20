@@ -8,11 +8,11 @@ Supports action dispatch and subscribe.
 ## Installing ActionDispatcher
 
 ```powershell
-Install-Package SourceGeneration.ActionDispatcher -Version 1.0.0-beta1.250506.0
+Install-Package SourceGeneration.ActionDispatcher -Version 1.0.0
 ```
 
 ```powershell
-dotnet add package SourceGeneration.ActionDispatcher --version 1.0.0-beta1.250506.0
+dotnet add package SourceGeneration.ActionDispatcher --version 1.0.0
 ```
 
 ## Registering with IServiceCollection
