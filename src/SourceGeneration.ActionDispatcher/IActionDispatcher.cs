@@ -9,15 +9,13 @@ public class ActionDispatchOptions
     internal static readonly ActionDispatchOptions Broadcast = new() { ThrowExceptionWhenNotHandled = false, BroadcastOnly = true };
 }
 
-public interface IActionDispatcher
+public interface IActionDispatcher: IActionNotifier
 {
     void Dispatch(object action, ActionDispatchOptions? options, CancellationToken cancellationToken = default);
     Task DispatchAsync(object action, ActionDispatchOptions? options, CancellationToken cancellationToken = default);
 
     //void Dispatch(object action, CancellationToken cancellationToken = default) => Dispatch(action, null, cancellationToken);
     //Task DispatchAsync(object action, CancellationToken cancellationToken = default) => DispatchAsync(action, null, cancellationToken);
-
-    void Notify(object action);
 
     //void Dispatch<TAction>(CancellationToken cancellationToken = default) where TAction : new() => Dispatch(new TAction(), null, cancellationToken);
     //Task DispatchAsync<TAction>(CancellationToken cancellationToken = default) where TAction : new() => DispatchAsync(new TAction(), null, cancellationToken);
