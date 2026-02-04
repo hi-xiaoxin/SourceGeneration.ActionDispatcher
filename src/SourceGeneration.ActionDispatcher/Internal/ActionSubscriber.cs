@@ -3,7 +3,7 @@ using System.Collections.Immutable;
 
 namespace SourceGeneration.ActionDispatcher.Internal;
 
-internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubscriber, IActionNotifier
+internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubscriber
 {
 #if NET9_0_OR_GREATER
     private readonly Lock _lock = new();
@@ -12,10 +12,7 @@ internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubsc
 #endif
     private ImmutableArray<SubscriptionBase> _subscriptions = [];
 
-    public void Notify(object action) => Notify(ActionDispatchStatus.Successed, action, null);
-    public void Notify(object action, Exception exception) => Notify(ActionDispatchStatus.Faulted, action, exception);
-
-    public void Notify(ActionDispatchStatus status, object action, Exception? exception)
+    public void Notify(ActionDispatchStatus status, object action, Exception? exception = null)
     {
         var subscribes = _subscriptions;
         foreach (var subscription in subscribes.Where(x => x.IsMatch(action.GetType(), status)))
@@ -129,7 +126,6 @@ internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubsc
             }
         }
     }
-
 
     private sealed class Disposable(Action action) : IDisposable
     {

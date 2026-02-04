@@ -11,10 +11,9 @@ namespace SourceGeneration.ActionDispatcher.SourceGenerator.Test
 using System;
 using SourceGeneration.ActionDispatcher;
 
-public struct Handler
-{  
-    [ActionHandler]
-    public static void Handle(DateTime datetime) { }
+internal interface IHandler
+{
+    [ActionHandler] void Handle(Action1 action);
 }
 ";
             var result = CSharpTestGenerator.Generate<ActionRoutesSourceGenerator>(source, typeof(IActionDispatcher).Assembly);

@@ -20,16 +20,20 @@ public class ActionRoutesSourceGenerator : IIncrementalGenerator
             HandleAttribute,
             predicate: static (node, token) =>
             {
+
                 if (node is not MethodDeclarationSyntax method
                     || method.IsAbstract()
-                    || !method.IsPublicOrInternal()
+                    || (node.Parent is not InterfaceDeclarationSyntax && !method.IsPublicOrInternal())
                     || method.TypeParameterList != null
                     || method.ParameterList.Parameters.Count == 0)
                 {
                     return false;
                 }
 
-                if (node.Parent is ClassDeclarationSyntax or InterfaceDeclarationSyntax or RecordDeclarationSyntax)
+
+                if (node.Parent is ClassDeclarationSyntax ||
+                    node.Parent is InterfaceDeclarationSyntax ||
+                    node.Parent is RecordDeclarationSyntax)
                     return true;
 
                 if (node.Parent is StructDeclarationSyntax && method.IsStatic())
