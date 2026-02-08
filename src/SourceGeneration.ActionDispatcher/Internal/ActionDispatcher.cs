@@ -1,17 +1,32 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.CodeAnalysis;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace SourceGeneration.ActionDispatcher.Internal;
 
 internal class DefaultActionDispatcher(ActionExecutor executor, IServiceProvider services) : IActionDispatcher
 {
-    public ValueTask EnqueueAsync<T>(T action) where T : notnull
+    public void Notify(object action) => executor.Notify(action);
+
+    public ValueTask ScheduleAsync<T>(T action, long scheduledAtMs = 0, long businessId = 0)
     {
-        return services.GetRequiredService<BackgroundTaskQueue<BackgroundTask<T>>>().EnqueueAsync([new BackgroundTask<T> { Data = action }]);
+        return services.GetRequiredService<ScheduledTaskQueue<T>>().ScheduleAsync([new DispatchItem<T>
+        {
+            Data = action,
+            BusinessId = businessId
+        }], scheduledAtMs);
     }
 
-    public ValueTask ScheduleAsync<T>(T action, DateTimeOffset scheduledTime) where T : notnull
+    public ValueTask ScheduleAsync<T>(IEnumerable<T> actions, long scheduledAtMs = 0)
     {
-        return services.GetRequiredService<ScheduledTaskQueue<BackgroundTask<T>>>().ScheduleAsync([new BackgroundTask<T> { Data = action }], scheduledTime.ToUnixTimeMilliseconds());
+        return services.GetRequiredService<ScheduledTaskQueue<T>>().ScheduleAsync([.. actions.Select(x => new DispatchItem<T>
+        {
+            Data = x,
+        })], scheduledAtMs);
+    }
+
+    public ValueTask ScheduleAsync<T>(IEnumerable<DispatchItem<T>> items, long scheduledAtMs = 0)
+    {
+        return services.GetRequiredService<ScheduledTaskQueue<T>>().ScheduleAsync([.. items], scheduledAtMs);
     }
 
     public void Execute(object action, CancellationToken cancellationToken = default)
@@ -23,4 +38,5 @@ internal class DefaultActionDispatcher(ActionExecutor executor, IServiceProvider
     {
         return executor.ExecuteAsync(action, cancellationToken);
     }
+
 }

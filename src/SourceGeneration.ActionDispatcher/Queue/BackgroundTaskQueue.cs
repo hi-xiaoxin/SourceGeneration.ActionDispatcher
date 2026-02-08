@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using SourceGeneration.ActionDispatcher.Internal;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 
@@ -13,13 +14,15 @@ public class BackgroundTaskQueueOptions
     public int MaxConcurrency { get; set; }
 }
 
-internal class BackgroundTaskQueue<TTask> : IHostedService where TTask : BackgroundTask
+
+internal class BackgroundTaskQueue<T> : IHostedService where T : notnull
 {
-    private readonly Channel<long> _channel;
-    private readonly ConcurrentDictionary<long, TTask> _runnings = [];
+    private readonly ActionSubscriber _notifier;
+    private readonly Channel<TaskId> _channel;
+    private readonly ConcurrentDictionary<TaskId, BackgroundTask<T>> _runnings = [];
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IBackgroundTaskPersistenceService<TTask> _store;
-    private readonly ILogger<BackgroundTaskQueue<TTask>> _logger;
+    private readonly IBackgroundTaskPersistenceService<T> _store;
+    private readonly ILogger<BackgroundTaskQueue<T>> _logger;
     private readonly int _maxConcurrency;
     private readonly bool _persisted;
     private readonly string? _queue;
@@ -29,26 +32,28 @@ internal class BackgroundTaskQueue<TTask> : IHostedService where TTask : Backgro
 
     public BackgroundTaskQueue(
         BackgroundTaskQueueOptions options,
-        IBackgroundTaskPersistenceService<TTask> store,
+        ActionSubscriber notifier,
+        IBackgroundTaskPersistenceService<T> store,
         IServiceScopeFactory scopeFactory,
-        ILogger<BackgroundTaskQueue<TTask>> logger)
+        ILogger<BackgroundTaskQueue<T>> logger)
     {
+        _notifier = notifier;
         _logger = logger;
         _scopeFactory = scopeFactory;
         _store = store;
         _maxConcurrency = Math.Max(1, options.MaxConcurrency);
         _persisted = options.IsPersisted;
         _queue = options.QueueName;
-        _channel = Channel.CreateUnbounded<long>(new UnboundedChannelOptions
+        _channel = Channel.CreateUnbounded<TaskId>(new UnboundedChannelOptions
         {
             SingleReader = false,
             SingleWriter = false
         });
     }
 
-    public bool Cancel(long taskId)
+    public bool Cancel(Guid taskId)
     {
-        if (_runnings.TryRemove(taskId, out var task))
+        if (_runnings.TryRemove(new(taskId, 0), out var task))
         {
             task.Cancel();
             return true;
@@ -56,25 +61,43 @@ internal class BackgroundTaskQueue<TTask> : IHostedService where TTask : Backgro
         return false;
     }
 
-    public async ValueTask EnqueueAsync(IReadOnlyList<TTask> tasks)
+    public bool Cancel(long taskId)
+    {
+        if (_runnings.TryRemove(new(Guid.Empty, taskId), out var task))
+        {
+            task.Cancel();
+            return true;
+        }
+        return false;
+    }
+
+    public async ValueTask EnqueueAsync(IReadOnlyList<PersistedTask<T>> tasks)
     {
         if (tasks == null || tasks.Count == 0) return;
-
         if (_persisted)
         {
-            await _store.SaveTaskAsync(_queue, tasks, 0).ConfigureAwait(false);
+            await _store.SaveTaskAsync(tasks).ConfigureAwait(false);
         }
+
         await EnqueueCoreAsync(tasks).ConfigureAwait(false);
     }
 
-    internal async Task EnqueueCoreAsync(IReadOnlyList<TTask> tasks)
+    internal async Task EnqueueCoreAsync(IReadOnlyList<PersistedTask<T>> tasks)
     {
         foreach (var task in tasks)
         {
-            var taskId = task.Id;
-            _runnings.TryAdd(taskId, task);
+            BackgroundTask<T> backgroundTask = new()
+            {
+                Data = task.Data,
+                Id = task.Id,
+                BusinessId = task.BusinessId,
+            };
 
-            task.SetStatus(TaskStatus.WaitingToRun);
+            TaskId taskId = new(backgroundTask.Id, backgroundTask.BusinessId);
+            _runnings.TryAdd(taskId, backgroundTask);
+
+            backgroundTask.SetStatus(TaskStatus.WaitingToRun);
+            _notifier.Notify(DispatchStatus.WaitingToRun, task.Data!);
 
             if (!_channel.Writer.TryWrite(taskId))
             {
@@ -93,7 +116,7 @@ internal class BackgroundTaskQueue<TTask> : IHostedService where TTask : Backgro
 
             if (tasks != null && tasks.Count > 0)
             {
-                await EnqueueCoreAsync([.. tasks.OrderBy(x => x.CreatedAt).Select(x => x.Task)]).ConfigureAwait(false);
+                await EnqueueCoreAsync(tasks).ConfigureAwait(false);
             }
         }
     }
@@ -139,7 +162,7 @@ internal class BackgroundTaskQueue<TTask> : IHostedService where TTask : Backgro
                     {
                         try
                         {
-                            await _store.DeleteTaskAsync(taskId, CancellationToken.None).ConfigureAwait(false);
+                            await _store.DeleteTaskAsync(taskId.Id, CancellationToken.None).ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {
@@ -166,7 +189,7 @@ internal class BackgroundTaskQueue<TTask> : IHostedService where TTask : Backgro
                     {
                         try
                         {
-                            await _store.DeleteTaskAsync(taskId, CancellationToken.None).ConfigureAwait(false);
+                            await _store.DeleteTaskAsync(taskId.Id, CancellationToken.None).ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {

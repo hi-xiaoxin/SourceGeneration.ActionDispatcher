@@ -1,27 +1,30 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using SourceGeneration.ActionDispatcher.Internal;
 using System.Collections.Concurrent;
 
 namespace SourceGeneration.ActionDispatcher;
 
-internal class ScheduledTaskQueue<TTask>(
+internal class ScheduledTaskQueue<T>(
     BackgroundTaskQueueOptions options,
-    BackgroundTaskQueue<TTask> queue,
-    IBackgroundTaskPersistenceService<TTask> store,
-    ILogger<ScheduledTaskQueue<TTask>> logger) : IBackgroundTaskScheduler<TTask>, IHostedService where TTask : BackgroundTask
+    ActionSubscriber notifier,
+    BackgroundTaskQueue<T> queue,
+    IBackgroundTaskPersistenceService<T> store,
+    ILogger<ScheduledTaskQueue<T>> logger) 
+    : IHostedService where T : notnull
 {
-    private static readonly UnityIdGenerator _idGenerator = new(0, 0);
-
-    private readonly ILogger<ScheduledTaskQueue<TTask>> _logger = logger;
-
-    private readonly PriorityQueue<long, long> _pq = new();
-    private readonly Dictionary<long, List<TTask>> _scheduledMap = [];
-    private readonly ConcurrentDictionary<long, long> _scheduledIndex = new();
 #if NET9_0_OR_GREATER
     private readonly Lock _lock = new();
 #else
     private readonly object _lock = new();
 #endif
+
+    private readonly ActionSubscriber _notifier = notifier;
+    private readonly ILogger<ScheduledTaskQueue<T>> _logger = logger;
+    private readonly PriorityQueue<long, long> _pq = new();
+    private readonly Dictionary<long, List<PersistedTask<T>>> _scheduledMap = [];
+    private readonly ConcurrentDictionary<TaskId, long> _scheduledIndex = new();
+
     private readonly bool _persisted = options.IsPersisted;
     private readonly string? _queue = options.QueueName;
 
@@ -31,45 +34,91 @@ internal class ScheduledTaskQueue<TTask>(
     private Task? _schedulerLoopTask;
     private int _wakeSignaled;
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+
+    public async ValueTask ScheduleAsync(IReadOnlyList<DispatchItem<T>> items, long scheduledAtMs  = 0)
     {
-        _stoppingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _schedulerLoopTask = SchedulerLoopAsync(_stoppingCts.Token);
+        if (items == null || items.Count == 0) return;
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        var tasks = items.Select(x =>
+        {
+#if NET9_0_OR_GREATER
+            var id = Guid.CreateVersion7();
+#else
+            var id = Guid.NewGuid();
+#endif
+            return new PersistedTask<T>
+            {
+                Id = id,
+                CreatedAt = now,
+                Data = x.Data,
+                BusinessId = x.BusinessId,
+                Queue = _queue,
+                ScheduledAtMs = scheduledAtMs,
+            };
+        }).ToList();
 
         if (_persisted)
         {
-            var tasks = await store.GetScheduledTasksAsync(_queue, cancellationToken).ConfigureAwait(false);
-            if (tasks != null && tasks.Count > 0)
+            await store.SaveTaskAsync(tasks).ConfigureAwait(false);
+        }
+
+        if (scheduledAtMs == 0 || scheduledAtMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+        {
+            await queue.EnqueueCoreAsync(tasks).ConfigureAwait(false);
+        }
+        else
+        {
+            await ScheduleCoreAsync(tasks, scheduledAtMs).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask ScheduleCoreAsync(List<PersistedTask<T>> tasks, long scheduledAtMs)
+    {
+        bool shouldWake = false;
+
+        foreach(var task in tasks)
+        {
+            _notifier.Notify(DispatchStatus.WaitingForActivation, task.Data!);
+        }
+
+        lock (_lock)
+        {
+            var previousEarliest = _pq.Count > 0 ? _pq.Peek() : (long?)null;
+
+            if (!_scheduledMap.TryGetValue(scheduledAtMs, out var list))
             {
-                foreach (var group in tasks.GroupBy(x => x.ScheduledAtMs).OrderBy(x => x.Key))
-                {
-                    await EnqueueCoreAsync(group.Select(x => x.Task).ToList(), group.Key).ConfigureAwait(false);
-                }
+                list = new List<PersistedTask<T>>(tasks.Count);
+                _scheduledMap[scheduledAtMs] = list;
+                _pq.Enqueue(scheduledAtMs, scheduledAtMs);
+            }
+            list.AddRange(tasks);
+
+            // 更新索引（在锁内添加映射，确保一致性）
+            foreach (var t in tasks)
+            {
+                _scheduledIndex.TryAdd(new(t.Id, t.BusinessId), scheduledAtMs);
+            }
+
+            if (!previousEarliest.HasValue || scheduledAtMs < previousEarliest.Value)
+            {
+                shouldWake = true;
+                Interlocked.Exchange(ref _wakeSignaled, 1);
             }
         }
+
+        // 在锁外唤醒（避免在锁内触发 continuation）
+        if (shouldWake)
+        {
+            var c = Volatile.Read(ref _wakeUp);
+            try { c?.Cancel(); } catch { }
+        }
     }
 
-    public async ValueTask ScheduleAsync(IReadOnlyList<TTask> tasks, long scheduledAtMs = 0)
+    public bool Cancel(Guid taskId)
     {
-        if (tasks == null || tasks.Count == 0) return;
-
-        foreach (var task in tasks)
-        {
-            if (task.Id == 0)
-                task.Id = await _idGenerator.NextIdAsync().ConfigureAwait(false);
-
-        }
-
-        if (_persisted)
-        {
-            await store.SaveTaskAsync(_queue, tasks, scheduledAtMs).ConfigureAwait(false);
-        }
-        await EnqueueCoreAsync(tasks, scheduledAtMs).ConfigureAwait(false);
-    }
-
-    public bool Cancel(long taskId)
-    {
-        if (taskId <= 0) return false;
+        //if (taskId <= 0) return false;
 
         if (_persisted)
         {
@@ -89,7 +138,7 @@ internal class ScheduledTaskQueue<TTask>(
         }
 
         // 先尝试从 scheduledIndex 快速定位并移除
-        if (!_scheduledIndex.TryRemove(taskId, out var scheduledAt))
+        if (!_scheduledIndex.TryRemove(new(taskId, 0), out var scheduledAt))
         {
             // 可能已入队或在运行，转发给底层 queue
             return queue.Cancel(taskId);
@@ -129,49 +178,21 @@ internal class ScheduledTaskQueue<TTask>(
         return removed;
     }
 
-    private async ValueTask EnqueueCoreAsync(IReadOnlyList<TTask> tasks, long scheduledAtMs = 0)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
-        if (scheduledAtMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
-        {
-            await queue.EnqueueCoreAsync(tasks).ConfigureAwait(false);
-            return;
-        }
+        _stoppingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _schedulerLoopTask = SchedulerLoopAsync(_stoppingCts.Token);
 
-        foreach (var task in tasks)
+        if (_persisted)
         {
-            task.Scheduled = true;
-            task.SetStatus(TaskStatus.WaitingForActivation);
-        }
-
-        bool shouldWake = false;
-        lock (_lock)
-        {
-            var previousEarliest = _pq.Count > 0 ? _pq.Peek() : (long?)null;
-
-            if (!_scheduledMap.TryGetValue(scheduledAtMs, out var list))
+            var tasks = await store.GetScheduledTasksAsync(_queue, cancellationToken).ConfigureAwait(false);
+            if (tasks != null && tasks.Count > 0)
             {
-                list = new List<TTask>(tasks.Count);
-                _scheduledMap[scheduledAtMs] = list;
-                _pq.Enqueue(scheduledAtMs, scheduledAtMs);
+                foreach (var group in tasks.GroupBy(x => x.ScheduledAtMs).OrderBy(x => x.Key))
+                {
+                    await ScheduleCoreAsync([.. group], group.Key).ConfigureAwait(false);
+                }
             }
-            list.AddRange(tasks);
-
-            // 更新索引（在锁内添加映射，确保一致性）
-            foreach (var t in tasks)
-                _scheduledIndex.TryAdd(t.Id, scheduledAtMs);
-
-            if (!previousEarliest.HasValue || scheduledAtMs < previousEarliest.Value)
-            {
-                shouldWake = true;
-                Interlocked.Exchange(ref _wakeSignaled, 1);
-            }
-        }
-
-        // 在锁外唤醒（避免在锁内触发 continuation）
-        if (shouldWake)
-        {
-            var c = Volatile.Read(ref _wakeUp);
-            try { c?.Cancel(); } catch { }
         }
     }
 
@@ -214,7 +235,7 @@ internal class ScheduledTaskQueue<TTask>(
         while (!cancellationToken.IsCancellationRequested)
         {
             long? waitUntil = null;
-            List<List<TTask>>? listsToFire = null;
+            List<List<PersistedTask<T>>>? listsToFire = null;
 
             lock (_lock)
             {
@@ -236,7 +257,7 @@ internal class ScheduledTaskQueue<TTask>(
 
                         if (timesToRemove.Count > 0)
                         {
-                            listsToFire = new List<List<TTask>>(timesToRemove.Count);
+                            listsToFire = new List<List<PersistedTask<T>>>(timesToRemove.Count);
                             foreach (var t in timesToRemove)
                             {
                                 if (_scheduledMap.TryGetValue(t, out var list))
@@ -254,13 +275,13 @@ internal class ScheduledTaskQueue<TTask>(
             if (listsToFire != null && listsToFire.Count > 0)
             {
                 // 在锁外合并并触发，减少临界区时间
-                List<TTask> toFire = [];
+                List<PersistedTask<T>> toFire = [];
                 foreach (var l in listsToFire)
                     toFire.AddRange(l);
 
                 // 移除索引条目（已经从 scheduledMap 移除），避免内存增长
                 foreach (var t in toFire)
-                    _scheduledIndex.TryRemove(t.Id, out _);
+                    _scheduledIndex.TryRemove(new(t.Id, 0), out _);
 
                 try
                 {

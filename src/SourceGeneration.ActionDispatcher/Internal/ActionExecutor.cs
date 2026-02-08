@@ -6,15 +6,18 @@ namespace SourceGeneration.ActionDispatcher.Internal;
 
 internal class ActionExecutor(IServiceProvider services, ActionSubscriber notifier)
 {
+    public void Notify(object action) => notifier.Notify(DispatchStatus.Completed, action);
+
     public async void Execute(object action, CancellationToken cancellationToken = default) => await InternalExecuteAsync(action, false, cancellationToken).ConfigureAwait(false);
 
     public Task ExecuteAsync(object action, CancellationToken cancellationToken = default) => InternalExecuteAsync(action, true, cancellationToken);
+
 
     private async Task InternalExecuteAsync(object action, bool throwException, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(action, nameof(action));
 
-        notifier.Notify(ActionDispatchStatus.WaitingToDispatch, action);
+        notifier.Notify(DispatchStatus.Running, action);
 
         try
         {
@@ -22,12 +25,12 @@ internal class ActionExecutor(IServiceProvider services, ActionSubscriber notifi
         }
         catch (OperationCanceledException ex)
         {
-            notifier.Notify(ActionDispatchStatus.Canceled, action, ex);
+            notifier.Notify(DispatchStatus.Canceled, action, ex);
             return;
         }
         catch (Exception ex)
         {
-            notifier.Notify(ActionDispatchStatus.Faulted, action, ex);
+            notifier.Notify(DispatchStatus.Faulted, action, ex);
 
             if (throwException)
             {
@@ -36,7 +39,7 @@ internal class ActionExecutor(IServiceProvider services, ActionSubscriber notifi
             return;
         }
 
-        notifier.Notify(ActionDispatchStatus.Successed, action);
+        notifier.Notify(DispatchStatus.Succeeded, action);
     }
 
     private async Task ExecuteCoreAsync(object action, CancellationToken cancellationToken)

@@ -2,6 +2,7 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using SourceGeneration.ActionDispatcher;
+using SourceGeneration.ActionDispatcher.Internal;
 
 namespace SourceGeneration.ActionDispatcher;
 
@@ -9,29 +10,27 @@ public static class RobosBackgroundTaskServiceCollectionExtensions
 {
     extension(IServiceCollection services)
     {
-        public IServiceCollection AddBackgroundTaskHandler<T>(Action<BackgroundTaskQueueOptions>? optionsAction = null) where T : notnull
-        {
-            return services.AddBackgroundTaskQueue<BackgroundTask<T>>(optionsAction);
-        }
 
-        public IServiceCollection AddBackgroundTaskQueue<TTask>(Action<BackgroundTaskQueueOptions>? optionsAction = null) where TTask : BackgroundTask
+        public IServiceCollection AddActionTaskQueue<T>(Action<BackgroundTaskQueueOptions>? optionsAction = null) where T : notnull
         {
             BackgroundTaskQueueOptions options = new();
             optionsAction?.Invoke(options);
 
-            services.AddSingleton(sp => new BackgroundTaskQueue<TTask>(options,
-                sp.GetRequiredService<IBackgroundTaskPersistenceService<TTask>>(),
+            services.AddSingleton(sp => new BackgroundTaskQueue<T>(options,
+                sp.GetRequiredService<ActionSubscriber>(),
+                sp.GetRequiredService<IBackgroundTaskPersistenceService<T>>(),
                 sp.GetRequiredService<IServiceScopeFactory>(),
-                sp.GetRequiredService<ILogger<BackgroundTaskQueue<TTask>>>()));
+                sp.GetRequiredService<ILogger<BackgroundTaskQueue<T>>>()));
 
-            services.AddSingleton(sp => new ScheduledTaskQueue<TTask>(options,
-                sp.GetRequiredService<BackgroundTaskQueue<TTask>>(),
-                sp.GetRequiredService<IBackgroundTaskPersistenceService<TTask>>(),
-                sp.GetRequiredService<ILogger<ScheduledTaskQueue<TTask>>>()));
+            services.AddSingleton(sp => new ScheduledTaskQueue<T>(options,
+                sp.GetRequiredService<ActionSubscriber>(),
+                sp.GetRequiredService<BackgroundTaskQueue<T>>(),
+                sp.GetRequiredService<IBackgroundTaskPersistenceService<T>>(),
+                sp.GetRequiredService<ILogger<ScheduledTaskQueue<T>>>()));
 
-            services.AddSingleton<IBackgroundTaskScheduler<TTask>>(sp => sp.GetRequiredService<ScheduledTaskQueue<TTask>>());
-            services.AddHostedService(sp => sp.GetRequiredService<BackgroundTaskQueue<TTask>>());
-            services.AddHostedService(sp => sp.GetRequiredService<ScheduledTaskQueue<TTask>>());
+            //services.AddSingleton<IBackgroundTaskScheduler<TTask>>(sp => sp.GetRequiredService<ScheduledTaskQueue<TTask>>());
+            services.AddHostedService(sp => sp.GetRequiredService<BackgroundTaskQueue<T>>());
+            services.AddHostedService(sp => sp.GetRequiredService<ScheduledTaskQueue<T>>());
 
             services.TryAddSingleton(typeof(IBackgroundTaskPersistenceService<>), typeof(NopBackgroundTaskPersistenceService<>));
 

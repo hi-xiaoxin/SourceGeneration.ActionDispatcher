@@ -1,19 +1,8 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using System.Text.Json.Serialization;
 
 namespace SourceGeneration.ActionDispatcher;
 
-internal class BackgroundTask<T> : BackgroundTask where T : notnull
-{
-    public T Data { get; init; } = default!;
-
-    protected override Task ExecuteAsync(CancellationToken cancellationToken)
-    {
-        return Services.GetRequiredService<IActionDispatcher>().ExecuteAsync(Data, cancellationToken);
-    }
-}
-
-public abstract class BackgroundTask
+internal sealed class BackgroundTask<T>
 {
     private CancellationTokenSource? _cts;
 
@@ -26,12 +15,13 @@ public abstract class BackgroundTask
     private bool _canceling = false;
     private int _status;
 
-    [JsonIgnore] public long Id { get; set; }
-    [JsonIgnore] public bool Scheduled { get; internal set; }
-    [JsonIgnore] public IServiceProvider Services { get; private set; } = null!;
-    [JsonIgnore] public TaskStatus Status => (TaskStatus)Volatile.Read(ref _status);
+    public T Data { get; init; } = default!;
 
-    internal void SetStatus(TaskStatus status)
+    public Guid Id { get; set; }
+    public long BusinessId { get; set; }
+    public TaskStatus Status => (TaskStatus)Volatile.Read(ref _status);
+
+    public void SetStatus(TaskStatus status)
     {
         Interlocked.Exchange(ref _status, (int)status);
         if (status >= TaskStatus.RanToCompletion)
@@ -51,7 +41,7 @@ public abstract class BackgroundTask
     }
 
 
-    internal async Task InternalExecuteAsync(IServiceScopeFactory scopeFactory, CancellationToken cancellationToken)
+    public async Task InternalExecuteAsync(IServiceScopeFactory scopeFactory, CancellationToken cancellationToken)
     {
         CancellationTokenSource? linked;
         lock (_lock)
@@ -72,9 +62,12 @@ public abstract class BackgroundTask
         try
         {
             using var scope = scopeFactory.CreateScope();
-            Services = scope.ServiceProvider;
 
-            await ExecuteAsync(linked.Token).ConfigureAwait(false);
+            await scope.ServiceProvider
+                .GetRequiredService<IActionDispatcher>()
+                .ExecuteAsync(Data!, cancellationToken)
+                .ConfigureAwait(false);
+
             SetStatus(TaskStatus.RanToCompletion);
         }
         catch (OperationCanceledException)
@@ -86,6 +79,4 @@ public abstract class BackgroundTask
             SetStatus(TaskStatus.Faulted);
         }
     }
-
-    protected abstract Task ExecuteAsync(CancellationToken cancellationToken);
 }

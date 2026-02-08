@@ -12,10 +12,11 @@ internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubsc
 #endif
     private ImmutableArray<SubscriptionBase> _subscriptions = [];
 
-    public void Notify(ActionDispatchStatus status, object action, Exception? exception = null)
+    public void Notify(DispatchStatus status, object action, Exception? exception = null)
     {
         var subscribes = _subscriptions;
-        foreach (var subscription in subscribes.Where(x => x.IsMatch(action.GetType(), status)))
+        var type = action.GetType();
+        foreach (var subscription in subscribes.Where(x => x.IsMatch(type, status)))
         {
             try
             {
@@ -29,7 +30,7 @@ internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubsc
         }
     }
 
-    public IDisposable Subscribe<TAction>(object? subscriber, ActionDispatchStatus status, Action<TAction, Exception?> callback) where TAction : notnull
+    public IDisposable Subscribe<TAction>(object? subscriber, DispatchStatus status, Action<TAction, Exception?> callback) where TAction : notnull
     {
         lock (_lock)
         {
@@ -39,7 +40,7 @@ internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubsc
         }
     }
 
-    public IDisposable Subscribe(object? subscriber, ActionDispatchStatus status, Type[] actionTypes, Action<object, Exception?> callback)
+    public IDisposable Subscribe(object? subscriber, DispatchStatus status, Type[] actionTypes, Action<object, Exception?> callback)
     {
         lock (_lock)
         {
@@ -49,7 +50,7 @@ internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubsc
         }
     }
 
-    public IDisposable Subscribe<TAction>(object? subscriber, ActionDispatchStatus status, Func<TAction, Exception?, Task> callback) where TAction : notnull
+    public IDisposable Subscribe<TAction>(object? subscriber, DispatchStatus status, Func<TAction, Exception?, Task> callback) where TAction : notnull
     {
         lock (_lock)
         {
@@ -59,7 +60,7 @@ internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubsc
         }
     }
 
-    public IDisposable Subscribe(object? subscriber, ActionDispatchStatus status, Type[] actionTypes, Func<object, Exception?, Task> callback)
+    public IDisposable Subscribe(object? subscriber, DispatchStatus status, Type[] actionTypes, Func<object, Exception?, Task> callback)
     {
         lock (_lock)
         {
@@ -77,25 +78,25 @@ internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubsc
         }
     }
 
-    private abstract class SubscriptionBase(object? subscriber, ActionDispatchStatus subscribeStatus, Type[] actionType)
+    private abstract class SubscriptionBase(object? subscriber, DispatchStatus subscribeStatus, Type[] actionType)
     {
         public readonly object? Subscriber = subscriber;
-        public bool IsMatch(Type type, ActionDispatchStatus status) => subscribeStatus.HasFlag(status) && actionType.Any(x => type.IsAssignableTo(x));
+        public bool IsMatch(Type type, DispatchStatus status) => subscribeStatus.HasFlag(status) && actionType.Any(x => type.IsAssignableTo(x));
 
         public abstract void Notify(object action, Exception? exception);
     }
 
-    private sealed class Subscription(object? subscriber, ActionDispatchStatus subscribeStatus, Type[] actionType, Action<object, Exception?> callback) : SubscriptionBase(subscriber, subscribeStatus, actionType)
+    private sealed class Subscription(object? subscriber, DispatchStatus subscribeStatus, Type[] actionType, Action<object, Exception?> callback) : SubscriptionBase(subscriber, subscribeStatus, actionType)
     {
         public override void Notify(object action, Exception? exception) => callback(action, exception);
     }
 
-    private sealed class Subscription<T>(object? subscriber, ActionDispatchStatus subscribeStatus, Action<T, Exception?> callback) : SubscriptionBase(subscriber, subscribeStatus, [typeof(T)])
+    private sealed class Subscription<T>(object? subscriber, DispatchStatus subscribeStatus, Action<T, Exception?> callback) : SubscriptionBase(subscriber, subscribeStatus, [typeof(T)])
     {
         public override void Notify(object action, Exception? exception) => callback((T)action, exception);
     }
 
-    private sealed class AsyncSubscription(object? subscriber, ActionDispatchStatus subscribeStatus, Type[] actionType, Func<object, Exception?, Task> callback, ILogger logger) : SubscriptionBase(subscriber, subscribeStatus, actionType)
+    private sealed class AsyncSubscription(object? subscriber, DispatchStatus subscribeStatus, Type[] actionType, Func<object, Exception?, Task> callback, ILogger logger) : SubscriptionBase(subscriber, subscribeStatus, actionType)
     {
         public override async void Notify(object action, Exception? exception)
         {
@@ -111,7 +112,7 @@ internal class ActionSubscriber(ILogger<ActionSubscriber> logger) : IActionSubsc
         }
     }
 
-    private sealed class AsyncSubscription<T>(object? subscriber, ActionDispatchStatus subscribeStatus, Func<T, Exception?, Task> callback, ILogger logger) : SubscriptionBase(subscriber, subscribeStatus, [typeof(T)])
+    private sealed class AsyncSubscription<T>(object? subscriber, DispatchStatus subscribeStatus, Func<T, Exception?, Task> callback, ILogger logger) : SubscriptionBase(subscriber, subscribeStatus, [typeof(T)])
     {
         public override async void Notify(object action, Exception? exception)
         {
