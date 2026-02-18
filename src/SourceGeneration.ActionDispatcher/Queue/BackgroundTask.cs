@@ -2,21 +2,16 @@
 
 namespace SourceGeneration.ActionDispatcher;
 
-internal sealed class BackgroundTask<TKey, TData> where TKey : notnull where TData : notnull
+internal sealed class BackgroundTask<TKey, TData>(TKey id, TData data) where TKey : notnull where TData : notnull
 {
     private CancellationTokenSource? _cts;
-
-#if NET9_0_OR_GREATER
     private readonly Lock _lock = new();
-#else
-    private readonly object _lock = new();
-#endif
 
     private bool _canceling = false;
     private int _status;
 
-    public TKey Id { get; set; } = default!;
-    public TData Data { get; init; } = default!;
+    public TKey Id { get; } = id;
+    public TData Data { get; } = data;
 
     public DispatchStatus Status => (DispatchStatus)Volatile.Read(ref _status);
 

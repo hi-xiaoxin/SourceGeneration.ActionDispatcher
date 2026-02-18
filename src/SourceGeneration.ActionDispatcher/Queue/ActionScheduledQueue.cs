@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 using SourceGeneration.ActionDispatcher.Internal;
 using System.Collections.Concurrent;
 
-namespace SourceGeneration.ActionDispatcher;
+namespace SourceGeneration.ActionDispatcher.Queue;
 
 internal class ActionScheduledQueue<TKey, TData>(
     ActionQueueOptions options,
@@ -15,11 +15,7 @@ internal class ActionScheduledQueue<TKey, TData>(
     where TData : notnull
     where TKey : notnull
 {
-#if NET9_0_OR_GREATER
     private readonly Lock _lock = new();
-#else
-    private readonly object _lock = new();
-#endif
 
     private readonly ILogger<ActionScheduledQueue<TKey, TData>> _logger = logger;
     private readonly ActionSubscriber _notifier = notifier;
@@ -30,11 +26,10 @@ internal class ActionScheduledQueue<TKey, TData>(
     private readonly bool _persisted = options.IsPersisted;
     private readonly string? _queue = options.QueueName;
 
-    private CancellationTokenSource? _wakeUp;
+    private readonly AsyncAutoResetEvent _signal = new(false);
     private CancellationTokenSource? _stoppingCts;
 
     private Task? _schedulerLoopTask;
-    private int _wakeSignaled;
 
     public async ValueTask ScheduleAsync(IReadOnlyList<DispatchItem<TKey, TData>> items, long scheduledAtMs = 0)
     {
@@ -55,6 +50,8 @@ internal class ActionScheduledQueue<TKey, TData>(
         {
             await store.SaveTaskAsync(tasks).ConfigureAwait(false);
         }
+
+// Simple async auto-reset event
 
         if (scheduledAtMs == 0 || scheduledAtMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
         {
@@ -96,15 +93,13 @@ internal class ActionScheduledQueue<TKey, TData>(
             if (!previousEarliest.HasValue || scheduledAtMs < previousEarliest.Value)
             {
                 shouldWake = true;
-                Interlocked.Exchange(ref _wakeSignaled, 1);
             }
         }
 
         // 在锁外唤醒（避免在锁内触发 continuation）
         if (shouldWake)
         {
-            var c = Volatile.Read(ref _wakeUp);
-            try { c?.Cancel(); } catch { }
+            try { _signal.Set(); } catch { }
         }
     }
 
@@ -149,18 +144,12 @@ internal class ActionScheduledQueue<TKey, TData>(
                     }
                 }
 
-                if (list.Count == 0)
-                {
-                    _scheduledMap.Remove(scheduledAt);
-                    // 标记唤醒以便 scheduler 重新计算下次触发（因为 earliest 可能变化）
-                    if (Interlocked.Exchange(ref _wakeSignaled, 1) == 0)
+                    if (list.Count == 0)
                     {
-                        // 唤醒当前安装的 CTS（若存在）
-                        var c = Volatile.Read(ref _wakeUp);
-                        try { c?.Cancel(); } catch { }
+                        _scheduledMap.Remove(scheduledAt);
+                        // 标记唤醒以便 scheduler 重新计算下次触发（因为 earliest 可能变化）
+                        try { _signal.Set(); } catch { }
                     }
-
-                }
             }
         }
 
@@ -176,6 +165,7 @@ internal class ActionScheduledQueue<TKey, TData>(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _stoppingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // start scheduler loop (async) — uses async wait, no dedicated thread required
         _schedulerLoopTask = SchedulerLoopAsync(_stoppingCts.Token);
 
         if (_persisted)
@@ -198,14 +188,7 @@ internal class ActionScheduledQueue<TKey, TData>(
             try
             {
                 _stoppingCts.Cancel();
-                var tcs = Interlocked.Exchange(ref _wakeUp, null);
-
-                var c = Interlocked.Exchange(ref _wakeUp, null);
-                if (c != null)
-                {
-                    try { c.Cancel(); } catch { }
-                    try { c.Dispose(); } catch { }
-                }
+                try { _signal.Set(); } catch { }
             }
             finally
             {
@@ -223,6 +206,7 @@ internal class ActionScheduledQueue<TKey, TData>(
                 _stoppingCts = null;
             }
         }
+        try { _signal.Dispose(); } catch { }
     }
 
     private async Task SchedulerLoopAsync(CancellationToken cancellationToken)
@@ -292,39 +276,69 @@ internal class ActionScheduledQueue<TKey, TData>(
                 continue; // 立即循环检查下一个
             }
 
-            // 安装本地 CTS（原子）
-            var localWake = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var installed = Interlocked.CompareExchange(ref _wakeUp, localWake, null);
-            var currentWake = installed ?? localWake;
-            var waitToken = currentWake.Token;
-
-            // 如果在安装前有唤醒信号，立即完成 waitOn
-            if (Interlocked.Exchange(ref _wakeSignaled, 0) == 1)
-            {
-                try { currentWake.Cancel(); } catch { }
-            }
-
-            // 计算等待时间并等待，或被 _wakeUp 唤醒
-            TimeSpan delay = waitUntil.HasValue
-                ? TimeSpan.FromMilliseconds(Math.Max(0, waitUntil.Value - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
-                : TimeSpan.FromMinutes(15);
+            // 使用 ManualResetEventSlim 等待并可被 Set 唤醒
+            // 默认最长等待 5 分钟（当没有任务时），避免长时间等待导致的时钟变化问题
+            const long defaultWaitMs = 1000 * 60 * 5L;
 
             try
             {
-                do
+                // 只等待一次异步信号或超时，返回后外层循环会重新计算 waitUntil
+                long remainingMs = waitUntil.HasValue
+                    ? Math.Max(0, waitUntil.Value - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+                    : defaultWaitMs;
+
+                if (remainingMs > 0 && !cancellationToken.IsCancellationRequested)
                 {
-                    var chunk = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds, int.MaxValue));
-                    await Task.Delay(chunk, waitToken);
-                    delay -= chunk;
+                    int chunk = (int)Math.Min(remainingMs, int.MaxValue);
+                    await _signal.WaitAsync(chunk, cancellationToken).ConfigureAwait(false);
                 }
-                while (delay > TimeSpan.Zero);
             }
             catch (OperationCanceledException) { }
-            finally
-            {
-                Interlocked.CompareExchange(ref _wakeUp, null, localWake);
-                try { localWake.Dispose(); } catch { }
-            }
         }
     }
+
+    internal sealed class AsyncAutoResetEvent : IDisposable
+    {
+        private readonly SemaphoreSlim _semaphore = new(0, 1);
+        private readonly Lock _lock = new();
+
+        public AsyncAutoResetEvent(bool initialState = false)
+        {
+            if (initialState)
+            {
+                // set initial signal
+                _semaphore.Release();
+            }
+        }
+
+        public async Task WaitAsync(int millisecondsTimeout, CancellationToken cancellationToken)
+        {
+            if (millisecondsTimeout == Timeout.Infinite)
+            {
+                await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            // WaitAsync(TimeSpan, CancellationToken) returns Task<bool>
+            await _semaphore.WaitAsync(TimeSpan.FromMilliseconds(millisecondsTimeout), cancellationToken).ConfigureAwait(false);
+            // if timed out, just return
+        }
+
+        public void Set()
+        {
+            lock (_lock)
+            {
+                if (_semaphore.CurrentCount == 0)
+                {
+                    try { _semaphore.Release(); } catch { }
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            _semaphore.Dispose();
+        }
+    }
+
 }

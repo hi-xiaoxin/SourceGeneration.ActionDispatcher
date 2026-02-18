@@ -7,6 +7,7 @@ using System.Threading.Channels;
 
 namespace SourceGeneration.ActionDispatcher;
 
+
 public class ActionQueueOptions
 {
     public string? QueueName { get; set; }
@@ -18,12 +19,6 @@ internal class ActionQueue<TKey, TData> : IHostedService
     where TKey : notnull
     where TData : notnull
 {
-#if NET9_0_OR_GREATER
-    private readonly Lock _runningsLock = new();
-#else
-    private readonly object _runningsLock = new();
-#endif
-
     private readonly ActionSubscriber _notifier;
     private readonly Channel<TKey> _channel;
     private readonly ConcurrentDictionary<TKey, BackgroundTask<TKey, TData>> _runningsById = new();
@@ -61,7 +56,7 @@ internal class ActionQueue<TKey, TData> : IHostedService
 
     public bool Cancel(TKey taskId)
     {
-        if(_runningsById.TryRemove(taskId, out var task))
+        if (_runningsById.TryRemove(taskId, out var task))
         {
             task.Cancel();
             _notifier.Notify(DispatchStatus.Canceled, task.Data);
@@ -86,22 +81,15 @@ internal class ActionQueue<TKey, TData> : IHostedService
         foreach (var task in tasks)
         {
             var id = task.Id;
-
-            BackgroundTask<TKey, TData> backgroundTask = new()
-            {
-                Data = task.Data,
-                Id = id,
-            };
+            BackgroundTask<TKey, TData> backgroundTask = new(id, task.Data);
 
             if (_runningsById.TryAdd(id, backgroundTask))
             {
                 backgroundTask.SetStatus(DispatchStatus.WaitingToRun);
-                _notifier.Notify(DispatchStatus.WaitingToRun, task.Data!);
+                _notifier.Notify(DispatchStatus.WaitingToRun, task.Data);
 
                 if (!_channel.Writer.TryWrite(id))
-                {
                     await _channel.Writer.WriteAsync(id).ConfigureAwait(false);
-                }
             }
         }
     }

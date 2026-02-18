@@ -25,19 +25,19 @@ subscriber.Subscribe<Action1>(DispatchStatus.Running, action => Console.WriteLin
 subscriber.Subscribe<Action1>(DispatchStatus.Succeeded, action => Console.WriteLine("Succeeded"));
 subscriber.Subscribe<Action1>(DispatchStatus.Canceled, action => Console.WriteLine("Canceled"));
 
-for (int i = 0; i < 1; i++)
-{
-    int id = i;
-    _ = dispatcher.ScheduleAsync(id, new Action1 { Result = 1 }, scheduledAt: DateTimeOffset.UtcNow.AddSeconds(1));
-    _ = Task.Run(async () =>
-    {
-        await Task.Delay(Random.Shared.Next(100, 800));
-        dispatcher.Cancel<int, Action1>(id);
-    });
-}
+//for (int i = 0; i < 1; i++)
+//{
+//    int id = i;
+//    _ = dispatcher.ScheduleAsync(id, new Action1 { Result = 1 }, scheduledAt: DateTimeOffset.UtcNow.AddSeconds(1));
+//    _ = Task.Run(async () =>
+//    {
+//        await Task.Delay(Random.Shared.Next(100, 800));
+//        dispatcher.Cancel<int, Action1>(id);
+//    });
+//}
 
 
-//Test1(dispatcher, subscriber);
+Test1(dispatcher, subscriber);
 
 
 //Console.WriteLine(action.Result);
@@ -46,8 +46,8 @@ Console.ReadLine();
 static void Test1(IActionDispatcher dispatcher, IActionSubscriber subscriber)
 {
     int count = 0;
-    int batch = 1;
-    int loop = 1;
+    int batch = 10;
+    int loop = 10;
 
 
     subscriber.Subscribe<Action1>(action =>
@@ -65,10 +65,11 @@ static void Test1(IActionDispatcher dispatcher, IActionSubscriber subscriber)
     {
         var items = Enumerable.Range(0, batch).Select(x => new DispatchItem<int, Action1>
         {
+            Id = x,
             Data = new Action1 { Result = x * (i + 1) },
         }).ToList();
 
-        _ = dispatcher.ScheduleAsync<int, Action1>(items, now + Random.Shared.Next(100, 2000));
+        _ = dispatcher.ScheduleAsync<int, Action1>(items, now + Random.Shared.Next(100, 5000));
     }
 }
 
