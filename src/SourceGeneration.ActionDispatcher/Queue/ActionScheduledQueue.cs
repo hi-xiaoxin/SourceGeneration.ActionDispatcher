@@ -311,7 +311,13 @@ internal class ActionScheduledQueue<TKey, TData>(
 
             try
             {
-                await Task.Delay(delay, waitToken).ConfigureAwait(false);
+                do
+                {
+                    var chunk = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds, int.MaxValue));
+                    await Task.Delay(chunk, waitToken);
+                    delay -= chunk;
+                }
+                while (delay > TimeSpan.Zero);
             }
             catch (OperationCanceledException) { }
             finally
