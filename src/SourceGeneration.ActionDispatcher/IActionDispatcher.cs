@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace SourceGeneration.ActionDispatcher;
+﻿namespace SourceGeneration.ActionDispatcher;
 
 public interface IActionDispatcher
 {
@@ -9,21 +7,38 @@ public interface IActionDispatcher
     void Execute(object action, CancellationToken cancellationToken = default);
     Task ExecuteAsync(object action, CancellationToken cancellationToken = default);
 
-    ValueTask EnqueueAsync<T>(T action, long businessId = 0) => ScheduleAsync(action, scheduledAtMs: 0, businessId: businessId);
-    ValueTask EnqueueAsync<T>(IEnumerable<T> actions) => ScheduleAsync(actions, scheduledAtMs: 0);
-    ValueTask EnqueueAsync<T>(IEnumerable<DispatchItem<T>> items) => ScheduleAsync(items, scheduledAtMs: 0);
+    ValueTask EnqueueAsync<TKey, TData>(TKey businessId, TData action)
+        where TKey : notnull
+        where TData : notnull
+        => ScheduleAsync(businessId, action, scheduledAtMs: 0);
 
-    ValueTask ScheduleAsync<T>(T action, long scheduledAtMs = 0, long businessId = 0);
-    ValueTask ScheduleAsync<T>(IEnumerable<T> actions, long scheduledAtMs = 0);
-    ValueTask ScheduleAsync<T>(IEnumerable<DispatchItem<T>> items, long scheduledAtMs = 0);
+    ValueTask EnqueueAsync<TKey, TData>(IEnumerable<DispatchItem<TKey, TData>> items)
+        where TKey : notnull
+        where TData : notnull
+        => ScheduleAsync(items, scheduledAtMs: 0);
 
-    ValueTask ScheduleAsync<T>(T action, DateTimeOffset? scheduledAt = null, long businessId = 0) => ScheduleAsync(action, scheduledAt?.ToUnixTimeMilliseconds() ?? 0, businessId);
-    ValueTask ScheduleAsync<T>(IEnumerable<T> actions, DateTimeOffset? scheduledAt = null) => ScheduleAsync(actions, scheduledAt?.ToUnixTimeMilliseconds() ?? 0);
-    ValueTask ScheduleAsync<T>(IEnumerable<DispatchItem<T>> items, DateTimeOffset? scheduledAt = null) => ScheduleAsync(items, scheduledAt?.ToUnixTimeMilliseconds() ?? 0);
+    ValueTask ScheduleAsync<TKey, TData>(TKey businessId, TData action, long scheduledAtMs = 0)
+        where TKey : notnull
+        where TData : notnull;
+
+    ValueTask ScheduleAsync<TKey, TData>(IEnumerable<DispatchItem<TKey, TData>> items, long scheduledAtMs = 0)
+        where TKey : notnull
+        where TData : notnull;
+
+    ValueTask ScheduleAsync<TKey, TData>(TKey businessId, TData action, DateTimeOffset? scheduledAt = null)
+        where TKey : notnull
+        where TData : notnull
+        => ScheduleAsync(businessId, action, scheduledAt?.ToUnixTimeMilliseconds() ?? 0);
+
+    ValueTask ScheduleAsync<TKey, TData>(IEnumerable<DispatchItem<TKey, TData>> items, DateTimeOffset? scheduledAt = null)
+        where TKey : notnull
+        where TData : notnull => ScheduleAsync(items, scheduledAt?.ToUnixTimeMilliseconds() ?? 0);
+
+    void Cancel<TKey, TData>(TKey id) where TKey : notnull where TData : notnull;
 }
 
-public class DispatchItem<T>
+public class DispatchItem<TKey, TData> where TKey : notnull where TData : notnull
 {
-    public T Data { get; set; } = default!;
-    public long BusinessId { get; set; }
+    public TData Data { get; set; } = default!;
+    public TKey Id { get; set; } = default!;
 }

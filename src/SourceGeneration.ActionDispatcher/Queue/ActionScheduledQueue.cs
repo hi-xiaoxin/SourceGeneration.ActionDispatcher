@@ -5,13 +5,15 @@ using System.Collections.Concurrent;
 
 namespace SourceGeneration.ActionDispatcher;
 
-internal class ScheduledTaskQueue<T>(
-    BackgroundTaskQueueOptions options,
+internal class ActionScheduledQueue<TKey, TData>(
+    ActionQueueOptions options,
     ActionSubscriber notifier,
-    BackgroundTaskQueue<T> queue,
-    IBackgroundTaskPersistenceService<T> store,
-    ILogger<ScheduledTaskQueue<T>> logger) 
-    : IHostedService where T : notnull
+    ActionQueue<TKey, TData> queue,
+    IActionPersistenceService<TKey, TData> store,
+    ILogger<ActionScheduledQueue<TKey, TData>> logger)
+    : IHostedService
+    where TData : notnull
+    where TKey : notnull
 {
 #if NET9_0_OR_GREATER
     private readonly Lock _lock = new();
@@ -19,11 +21,11 @@ internal class ScheduledTaskQueue<T>(
     private readonly object _lock = new();
 #endif
 
+    private readonly ILogger<ActionScheduledQueue<TKey, TData>> _logger = logger;
     private readonly ActionSubscriber _notifier = notifier;
-    private readonly ILogger<ScheduledTaskQueue<T>> _logger = logger;
     private readonly PriorityQueue<long, long> _pq = new();
-    private readonly Dictionary<long, List<PersistedTask<T>>> _scheduledMap = [];
-    private readonly ConcurrentDictionary<TaskId, long> _scheduledIndex = new();
+    private readonly Dictionary<long, List<PersistedTask<TKey, TData>>> _scheduledMap = [];
+    private readonly ConcurrentDictionary<TKey, long> _scheduledIndexById = new();
 
     private readonly bool _persisted = options.IsPersisted;
     private readonly string? _queue = options.QueueName;
@@ -34,29 +36,19 @@ internal class ScheduledTaskQueue<T>(
     private Task? _schedulerLoopTask;
     private int _wakeSignaled;
 
-
-    public async ValueTask ScheduleAsync(IReadOnlyList<DispatchItem<T>> items, long scheduledAtMs  = 0)
+    public async ValueTask ScheduleAsync(IReadOnlyList<DispatchItem<TKey, TData>> items, long scheduledAtMs = 0)
     {
         if (items == null || items.Count == 0) return;
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        var tasks = items.Select(x =>
+        var tasks = items.Select(x => new PersistedTask<TKey, TData>
         {
-#if NET9_0_OR_GREATER
-            var id = Guid.CreateVersion7();
-#else
-            var id = Guid.NewGuid();
-#endif
-            return new PersistedTask<T>
-            {
-                Id = id,
-                CreatedAt = now,
-                Data = x.Data,
-                BusinessId = x.BusinessId,
-                Queue = _queue,
-                ScheduledAtMs = scheduledAtMs,
-            };
+            Id = x.Id,
+            CreatedAt = now,
+            Data = x.Data,
+            Queue = _queue,
+            ScheduledAtMs = scheduledAtMs,
         }).ToList();
 
         if (_persisted)
@@ -74,11 +66,11 @@ internal class ScheduledTaskQueue<T>(
         }
     }
 
-    private async ValueTask ScheduleCoreAsync(List<PersistedTask<T>> tasks, long scheduledAtMs)
+    private async ValueTask ScheduleCoreAsync(List<PersistedTask<TKey, TData>> tasks, long scheduledAtMs)
     {
         bool shouldWake = false;
 
-        foreach(var task in tasks)
+        foreach (var task in tasks)
         {
             _notifier.Notify(DispatchStatus.WaitingForActivation, task.Data!);
         }
@@ -89,16 +81,16 @@ internal class ScheduledTaskQueue<T>(
 
             if (!_scheduledMap.TryGetValue(scheduledAtMs, out var list))
             {
-                list = new List<PersistedTask<T>>(tasks.Count);
+                list = new List<PersistedTask<TKey, TData>>(tasks.Count);
                 _scheduledMap[scheduledAtMs] = list;
                 _pq.Enqueue(scheduledAtMs, scheduledAtMs);
             }
             list.AddRange(tasks);
 
-            // 更新索引（在锁内添加映射，确保一致性）
+            // 更新索引（在锁内添加映射，确保一致性）      
             foreach (var t in tasks)
             {
-                _scheduledIndex.TryAdd(new(t.Id, t.BusinessId), scheduledAtMs);
+                _scheduledIndexById.TryAdd(t.Id, scheduledAtMs);
             }
 
             if (!previousEarliest.HasValue || scheduledAtMs < previousEarliest.Value)
@@ -116,10 +108,8 @@ internal class ScheduledTaskQueue<T>(
         }
     }
 
-    public bool Cancel(Guid taskId)
+    public bool Cancel(TKey taskId)
     {
-        //if (taskId <= 0) return false;
-
         if (_persisted)
         {
             // 从持久化删除（fire-and-forget）
@@ -138,24 +128,23 @@ internal class ScheduledTaskQueue<T>(
         }
 
         // 先尝试从 scheduledIndex 快速定位并移除
-        if (!_scheduledIndex.TryRemove(new(taskId, 0), out var scheduledAt))
+        if (!_scheduledIndexById.TryRemove(taskId, out var scheduledAt))
         {
             // 可能已入队或在运行，转发给底层 queue
             return queue.Cancel(taskId);
         }
 
-        bool removed = false;
-
+        PersistedTask<TKey, TData>? removed = null;
         lock (_lock)
         {
             if (_scheduledMap.TryGetValue(scheduledAt, out var list))
             {
                 for (int i = list.Count - 1; i >= 0; i--)
                 {
-                    if (list[i].Id == taskId)
+                    removed = list[i];
+                    if (removed.Id.Equals(taskId))
                     {
                         list.RemoveAt(i);
-                        removed = true;
                         break;
                     }
                 }
@@ -175,7 +164,13 @@ internal class ScheduledTaskQueue<T>(
             }
         }
 
-        return removed;
+        if (removed != null)
+        {
+            _notifier.Notify(DispatchStatus.Canceled, removed.Data);
+            return true;
+        }
+
+        return false;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -235,7 +230,7 @@ internal class ScheduledTaskQueue<T>(
         while (!cancellationToken.IsCancellationRequested)
         {
             long? waitUntil = null;
-            List<List<PersistedTask<T>>>? listsToFire = null;
+            List<List<PersistedTask<TKey, TData>>>? listsToFire = null;
 
             lock (_lock)
             {
@@ -257,7 +252,7 @@ internal class ScheduledTaskQueue<T>(
 
                         if (timesToRemove.Count > 0)
                         {
-                            listsToFire = new List<List<PersistedTask<T>>>(timesToRemove.Count);
+                            listsToFire = new List<List<PersistedTask<TKey, TData>>>(timesToRemove.Count);
                             foreach (var t in timesToRemove)
                             {
                                 if (_scheduledMap.TryGetValue(t, out var list))
@@ -275,13 +270,15 @@ internal class ScheduledTaskQueue<T>(
             if (listsToFire != null && listsToFire.Count > 0)
             {
                 // 在锁外合并并触发，减少临界区时间
-                List<PersistedTask<T>> toFire = [];
+                List<PersistedTask<TKey, TData>> toFire = [];
                 foreach (var l in listsToFire)
                     toFire.AddRange(l);
 
                 // 移除索引条目（已经从 scheduledMap 移除），避免内存增长
                 foreach (var t in toFire)
-                    _scheduledIndex.TryRemove(new(t.Id, 0), out _);
+                {
+                    _scheduledIndexById.TryRemove(t.Id, out _);
+                }
 
                 try
                 {

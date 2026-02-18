@@ -2,7 +2,7 @@
 
 namespace SourceGeneration.ActionDispatcher;
 
-internal sealed class BackgroundTask<T>
+internal sealed class BackgroundTask<TKey, TData> where TKey : notnull where TData : notnull
 {
     private CancellationTokenSource? _cts;
 
@@ -15,16 +15,15 @@ internal sealed class BackgroundTask<T>
     private bool _canceling = false;
     private int _status;
 
-    public T Data { get; init; } = default!;
+    public TKey Id { get; set; } = default!;
+    public TData Data { get; init; } = default!;
 
-    public Guid Id { get; set; }
-    public long BusinessId { get; set; }
-    public TaskStatus Status => (TaskStatus)Volatile.Read(ref _status);
+    public DispatchStatus Status => (DispatchStatus)Volatile.Read(ref _status);
 
-    public void SetStatus(TaskStatus status)
+    public void SetStatus(DispatchStatus status)
     {
         Interlocked.Exchange(ref _status, (int)status);
-        if (status >= TaskStatus.RanToCompletion)
+        if (status >= DispatchStatus.Succeeded)
         {
             _cts?.Dispose();
             _cts = null;
@@ -48,12 +47,12 @@ internal sealed class BackgroundTask<T>
         {
             if (_canceling)
             {
-                SetStatus(TaskStatus.Canceled);
+                SetStatus(DispatchStatus.Canceled);
                 return;
             }
             else
             {
-                SetStatus(TaskStatus.Running);
+                SetStatus(DispatchStatus.Running);
                 linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 _cts = linked;
             }
@@ -68,15 +67,22 @@ internal sealed class BackgroundTask<T>
                 .ExecuteAsync(Data!, cancellationToken)
                 .ConfigureAwait(false);
 
-            SetStatus(TaskStatus.RanToCompletion);
+            SetStatus(DispatchStatus.Succeeded);
         }
         catch (OperationCanceledException)
         {
-            SetStatus(TaskStatus.Canceled);
+            SetStatus(DispatchStatus.Canceled);
         }
         catch
         {
-            SetStatus(TaskStatus.Faulted);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                SetStatus(DispatchStatus.Canceled);
+            }
+            else
+            {
+                SetStatus(DispatchStatus.Faulted);
+            }
         }
     }
 }

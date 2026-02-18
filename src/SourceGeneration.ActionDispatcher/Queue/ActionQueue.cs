@@ -7,22 +7,30 @@ using System.Threading.Channels;
 
 namespace SourceGeneration.ActionDispatcher;
 
-public class BackgroundTaskQueueOptions
+public class ActionQueueOptions
 {
     public string? QueueName { get; set; }
     public bool IsPersisted { get; set; } = true;
     public int MaxConcurrency { get; set; }
 }
 
-
-internal class BackgroundTaskQueue<T> : IHostedService where T : notnull
+internal class ActionQueue<TKey, TData> : IHostedService
+    where TKey : notnull
+    where TData : notnull
 {
+#if NET9_0_OR_GREATER
+    private readonly Lock _runningsLock = new();
+#else
+    private readonly object _runningsLock = new();
+#endif
+
     private readonly ActionSubscriber _notifier;
-    private readonly Channel<TaskId> _channel;
-    private readonly ConcurrentDictionary<TaskId, BackgroundTask<T>> _runnings = [];
+    private readonly Channel<TKey> _channel;
+    private readonly ConcurrentDictionary<TKey, BackgroundTask<TKey, TData>> _runningsById = new();
+
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IBackgroundTaskPersistenceService<T> _store;
-    private readonly ILogger<BackgroundTaskQueue<T>> _logger;
+    private readonly IActionPersistenceService<TKey, TData> _store;
+    private readonly ILogger<ActionQueue<TKey, TData>> _logger;
     private readonly int _maxConcurrency;
     private readonly bool _persisted;
     private readonly string? _queue;
@@ -30,12 +38,12 @@ internal class BackgroundTaskQueue<T> : IHostedService where T : notnull
     private CancellationTokenSource? _stoppingCts;
     private Task[]? _workers;
 
-    public BackgroundTaskQueue(
-        BackgroundTaskQueueOptions options,
+    public ActionQueue(
+        ActionQueueOptions options,
         ActionSubscriber notifier,
-        IBackgroundTaskPersistenceService<T> store,
+        IActionPersistenceService<TKey, TData> store,
         IServiceScopeFactory scopeFactory,
-        ILogger<BackgroundTaskQueue<T>> logger)
+        ILogger<ActionQueue<TKey, TData>> logger)
     {
         _notifier = notifier;
         _logger = logger;
@@ -44,34 +52,25 @@ internal class BackgroundTaskQueue<T> : IHostedService where T : notnull
         _maxConcurrency = Math.Max(1, options.MaxConcurrency);
         _persisted = options.IsPersisted;
         _queue = options.QueueName;
-        _channel = Channel.CreateUnbounded<TaskId>(new UnboundedChannelOptions
+        _channel = Channel.CreateUnbounded<TKey>(new UnboundedChannelOptions
         {
             SingleReader = false,
             SingleWriter = false
         });
     }
 
-    public bool Cancel(Guid taskId)
+    public bool Cancel(TKey taskId)
     {
-        if (_runnings.TryRemove(new(taskId, 0), out var task))
+        if(_runningsById.TryRemove(taskId, out var task))
         {
             task.Cancel();
+            _notifier.Notify(DispatchStatus.Canceled, task.Data);
             return true;
         }
         return false;
     }
 
-    public bool Cancel(long taskId)
-    {
-        if (_runnings.TryRemove(new(Guid.Empty, taskId), out var task))
-        {
-            task.Cancel();
-            return true;
-        }
-        return false;
-    }
-
-    public async ValueTask EnqueueAsync(IReadOnlyList<PersistedTask<T>> tasks)
+    public async ValueTask EnqueueAsync(IReadOnlyList<PersistedTask<TKey, TData>> tasks)
     {
         if (tasks == null || tasks.Count == 0) return;
         if (_persisted)
@@ -82,29 +81,31 @@ internal class BackgroundTaskQueue<T> : IHostedService where T : notnull
         await EnqueueCoreAsync(tasks).ConfigureAwait(false);
     }
 
-    internal async Task EnqueueCoreAsync(IReadOnlyList<PersistedTask<T>> tasks)
+    internal async Task EnqueueCoreAsync(IReadOnlyList<PersistedTask<TKey, TData>> tasks)
     {
         foreach (var task in tasks)
         {
-            BackgroundTask<T> backgroundTask = new()
+            var id = task.Id;
+
+            BackgroundTask<TKey, TData> backgroundTask = new()
             {
                 Data = task.Data,
-                Id = task.Id,
-                BusinessId = task.BusinessId,
+                Id = id,
             };
 
-            TaskId taskId = new(backgroundTask.Id, backgroundTask.BusinessId);
-            _runnings.TryAdd(taskId, backgroundTask);
-
-            backgroundTask.SetStatus(TaskStatus.WaitingToRun);
-            _notifier.Notify(DispatchStatus.WaitingToRun, task.Data!);
-
-            if (!_channel.Writer.TryWrite(taskId))
+            if (_runningsById.TryAdd(id, backgroundTask))
             {
-                await _channel.Writer.WriteAsync(taskId).ConfigureAwait(false);
+                backgroundTask.SetStatus(DispatchStatus.WaitingToRun);
+                _notifier.Notify(DispatchStatus.WaitingToRun, task.Data!);
+
+                if (!_channel.Writer.TryWrite(id))
+                {
+                    await _channel.Writer.WriteAsync(id).ConfigureAwait(false);
+                }
             }
         }
     }
+
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -155,14 +156,14 @@ internal class BackgroundTaskQueue<T> : IHostedService where T : notnull
         {
             await foreach (var taskId in _channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
-                if (!_runnings.TryRemove(taskId, out var task) || task.Status != TaskStatus.WaitingToRun)
+                if (!_runningsById.TryRemove(taskId, out var task) || task!.Status != DispatchStatus.WaitingToRun)
                 {
                     // 若任务已被移除或标记为取消，则直接尝试清理持久化并跳过执行
                     if (_persisted)
                     {
                         try
                         {
-                            await _store.DeleteTaskAsync(taskId.Id, CancellationToken.None).ConfigureAwait(false);
+                            await _store.DeleteTaskAsync(taskId, CancellationToken.None).ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {
@@ -172,6 +173,8 @@ internal class BackgroundTaskQueue<T> : IHostedService where T : notnull
                     }
                     continue;
                 }
+
+                // business mapping already removed in TryRemoveById
 
                 try
                 {
@@ -189,7 +192,7 @@ internal class BackgroundTaskQueue<T> : IHostedService where T : notnull
                     {
                         try
                         {
-                            await _store.DeleteTaskAsync(taskId.Id, CancellationToken.None).ConfigureAwait(false);
+                            await _store.DeleteTaskAsync(taskId, CancellationToken.None).ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {

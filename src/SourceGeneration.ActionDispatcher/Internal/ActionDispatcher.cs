@@ -1,5 +1,4 @@
-﻿using Microsoft.CodeAnalysis;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 
 namespace SourceGeneration.ActionDispatcher.Internal;
 
@@ -7,26 +6,29 @@ internal class DefaultActionDispatcher(ActionExecutor executor, IServiceProvider
 {
     public void Notify(object action) => executor.Notify(action);
 
-    public ValueTask ScheduleAsync<T>(T action, long scheduledAtMs = 0, long businessId = 0)
+    public void Cancel<TKey, TData>(TKey id)
+        where TKey : notnull
+        where TData : notnull
     {
-        return services.GetRequiredService<ScheduledTaskQueue<T>>().ScheduleAsync([new DispatchItem<T>
+        services.GetRequiredService<ActionScheduledQueue<TKey, TData>>().Cancel(id);
+    }
+
+    public ValueTask ScheduleAsync<TKey, TData>(TKey id, TData action, long scheduledAtMs = 0)
+        where TKey : notnull
+        where TData : notnull
+    {
+        return services.GetRequiredService<ActionScheduledQueue<TKey, TData>>().ScheduleAsync([new DispatchItem<TKey, TData>
         {
-            Data = action,
-            BusinessId = businessId
+            Id = id,
+            Data = action
         }], scheduledAtMs);
     }
 
-    public ValueTask ScheduleAsync<T>(IEnumerable<T> actions, long scheduledAtMs = 0)
+    public ValueTask ScheduleAsync<TKey, TData>(IEnumerable<DispatchItem<TKey, TData>> items, long scheduledAtMs = 0)
+        where TKey : notnull
+        where TData : notnull
     {
-        return services.GetRequiredService<ScheduledTaskQueue<T>>().ScheduleAsync([.. actions.Select(x => new DispatchItem<T>
-        {
-            Data = x,
-        })], scheduledAtMs);
-    }
-
-    public ValueTask ScheduleAsync<T>(IEnumerable<DispatchItem<T>> items, long scheduledAtMs = 0)
-    {
-        return services.GetRequiredService<ScheduledTaskQueue<T>>().ScheduleAsync([.. items], scheduledAtMs);
+        return services.GetRequiredService<ActionScheduledQueue<TKey, TData>>().ScheduleAsync([.. items], scheduledAtMs);
     }
 
     public void Execute(object action, CancellationToken cancellationToken = default)
