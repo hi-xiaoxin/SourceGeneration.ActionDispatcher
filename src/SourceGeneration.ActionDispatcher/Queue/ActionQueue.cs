@@ -5,8 +5,7 @@ using SourceGeneration.ActionDispatcher.Internal;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 
-namespace SourceGeneration.ActionDispatcher;
-
+namespace SourceGeneration.ActionDispatcher.Queue;
 
 public class ActionQueueOptions
 {

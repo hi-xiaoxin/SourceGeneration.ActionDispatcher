@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 
-namespace SourceGeneration.ActionDispatcher;
+namespace SourceGeneration.ActionDispatcher.Queue;
 
 internal sealed class BackgroundTask<TKey, TData>(TKey id, TData data) where TKey : notnull where TData : notnull
 {

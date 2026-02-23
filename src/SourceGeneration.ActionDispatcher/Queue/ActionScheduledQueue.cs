@@ -11,7 +11,7 @@ internal class ActionScheduledQueue<TKey, TData>(
     ActionQueue<TKey, TData> queue,
     IActionPersistenceService<TKey, TData> store,
     ILogger<ActionScheduledQueue<TKey, TData>> logger)
-    : IHostedService
+    : IHostedService, IActionScheduledQueue<TKey, TData>
     where TData : notnull
     where TKey : notnull
 {

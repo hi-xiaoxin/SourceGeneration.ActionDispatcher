@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using SourceGeneration.ActionDispatcher.Queue;
 
 namespace SourceGeneration.ActionDispatcher.Internal;
 
@@ -10,14 +11,14 @@ internal class DefaultActionDispatcher(ActionExecutor executor, IServiceProvider
         where TKey : notnull
         where TData : notnull
     {
-        services.GetRequiredService<ActionScheduledQueue<TKey, TData>>().Cancel(id);
+        services.GetRequiredService<IActionScheduledQueue<TKey, TData>>().Cancel(id);
     }
 
     public ValueTask ScheduleAsync<TKey, TData>(TKey id, TData action, long scheduledAtMs = 0)
         where TKey : notnull
         where TData : notnull
     {
-        return services.GetRequiredService<ActionScheduledQueue<TKey, TData>>().ScheduleAsync([new DispatchItem<TKey, TData>
+        return services.GetRequiredService<IActionScheduledQueue<TKey, TData>>().ScheduleAsync([new DispatchItem<TKey, TData>
         {
             Id = id,
             Data = action
@@ -28,7 +29,7 @@ internal class DefaultActionDispatcher(ActionExecutor executor, IServiceProvider
         where TKey : notnull
         where TData : notnull
     {
-        return services.GetRequiredService<ActionScheduledQueue<TKey, TData>>().ScheduleAsync([.. items], scheduledAtMs);
+        return services.GetRequiredService<IActionScheduledQueue<TKey, TData>>().ScheduleAsync([.. items], scheduledAtMs);
     }
 
     public void Execute(object action, CancellationToken cancellationToken = default)

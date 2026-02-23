@@ -2,6 +2,7 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using SourceGeneration.ActionDispatcher.Internal;
+using SourceGeneration.ActionDispatcher.Queue;
 
 namespace SourceGeneration.ActionDispatcher;
 
@@ -16,29 +17,10 @@ public static class ActionDispatcherServiceCollectionExtensions
             services.TryAdd(new ServiceDescriptor(typeof(ActionSubscriber), typeof(ActionSubscriber), subscriberLifetime));
             services.TryAdd(new ServiceDescriptor(typeof(IActionSubscriber), p => p.GetRequiredService<ActionSubscriber>(), subscriberLifetime));
 
+            services.TryAddSingleton(typeof(IActionScheduledQueue<,>), typeof(NopActionScheduledQueue<,>));
+
             return services;
         }
-
-        public IServiceCollection AddActionSubscriber(ServiceLifetime subscriberLifetime = ServiceLifetime.Scoped)
-        {
-            services.Add(new ServiceDescriptor(typeof(IActionDispatcher), typeof(DefaultActionDispatcher), subscriberLifetime));
-            services.Add(new ServiceDescriptor(typeof(ActionExecutor), typeof(ActionExecutor), subscriberLifetime));
-            services.Add(new ServiceDescriptor(typeof(ActionSubscriber), typeof(ActionSubscriber), subscriberLifetime));
-            services.Add(new ServiceDescriptor(typeof(IActionSubscriber), p => p.GetRequiredService<ActionSubscriber>(), subscriberLifetime));
-            return services;
-        }
-
-#if NET8_0_OR_GREATER
-        public IServiceCollection AddKeyedActionSubscriber(object? serviceKey, ServiceLifetime subscriberLifetime = ServiceLifetime.Scoped)
-        {
-            services.Add(new ServiceDescriptor(typeof(IActionDispatcher), serviceKey, typeof(DefaultActionDispatcher), subscriberLifetime));
-            services.Add(new ServiceDescriptor(typeof(ActionExecutor), serviceKey, typeof(ActionExecutor), subscriberLifetime));
-            services.Add(new ServiceDescriptor(typeof(ActionSubscriber), serviceKey, typeof(ActionSubscriber), subscriberLifetime));
-            services.Add(new ServiceDescriptor(typeof(IActionSubscriber), serviceKey, (sp, key) => sp.GetRequiredKeyedService<ActionSubscriber>(key), subscriberLifetime));
-            return services;
-        }
-#endif
-
     }
 
     extension(IServiceCollection services)
@@ -62,7 +44,7 @@ public static class ActionDispatcherServiceCollectionExtensions
                 sp.GetRequiredService<IActionPersistenceService<TKey, TData>>(),
                 sp.GetRequiredService<ILogger<ActionScheduledQueue<TKey, TData>>>()));
 
-            //services.AddSingleton<IBackgroundTaskScheduler<TTask>>(sp => sp.GetRequiredService<ScheduledTaskQueue<TTask>>());
+            services.AddSingleton<IActionScheduledQueue<TKey, TData>>(sp => sp.GetRequiredService<ActionScheduledQueue<TKey, TData>>());
             services.AddHostedService(sp => sp.GetRequiredService<ActionQueue<TKey, TData>>());
             services.AddHostedService(sp => sp.GetRequiredService<ActionScheduledQueue<TKey, TData>>());
 
