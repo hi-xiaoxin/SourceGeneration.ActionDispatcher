@@ -1,26 +1,16 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using SourceGeneration.ActionDispatcher.Queue;
 
 namespace SourceGeneration.ActionDispatcher.Test;
 
-
 internal interface IHandler
 {
-    [ActionHandler] void Handle(Action1 action);
-    //[ActionHandler] void Handle2(Action1 action);
+    [ActionHandler] void Handle(ActionTaskQueueContext<Guid, Action1> action);
 }
 
 internal class Handler : IHandler
 {
-    public void Handle(Action1 action)
+    public void Handle(ActionTaskQueueContext<Guid, Action1> action)
     {
-        action.Result++;
+        action.Data.Result++;
     }
-
-    public void Handle2(Action1 action)
-    {
-        action.Result++;
-    }
-
 }

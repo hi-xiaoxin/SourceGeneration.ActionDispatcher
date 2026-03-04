@@ -80,7 +80,7 @@ internal class ActionQueue<TKey, TData> : IHostedService
         foreach (var task in tasks)
         {
             var id = task.Id;
-            BackgroundTask<TKey, TData> backgroundTask = new(id, task.Data);
+            BackgroundTask<TKey, TData> backgroundTask = new(task);
 
             if (_runningsById.TryAdd(id, backgroundTask))
             {

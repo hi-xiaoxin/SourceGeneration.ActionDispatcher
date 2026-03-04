@@ -53,6 +53,10 @@ public static class ActionDispatcherServiceCollectionExtensions
             return services;
         }
 
+        public IServiceCollection AddActionQueue<TData>(Action<ActionQueueOptions>? optionsAction = null)
+            where TData : notnull
+        {
+            return services.AddActionQueue<Guid,TData>(optionsAction);
+        }
     }
-
 }

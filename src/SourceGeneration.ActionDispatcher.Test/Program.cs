@@ -9,7 +9,7 @@ var builder = Host.CreateApplicationBuilder();
 
 builder.Services.AddLogging();
 builder.Services.AddActionDispatcher();
-builder.Services.AddActionQueue<int, Action1>(options => options.MaxConcurrency = 30);
+builder.Services.AddActionQueue<Action1>(options => options.MaxConcurrency = 30);
 
 builder.Services.AddSingleton<IHandler, Handler>();
 var app = builder.Build();
@@ -25,19 +25,20 @@ subscriber.Subscribe<Action1>(DispatchStatus.Running, action => Console.WriteLin
 subscriber.Subscribe<Action1>(DispatchStatus.Succeeded, action => Console.WriteLine("Succeeded"));
 subscriber.Subscribe<Action1>(DispatchStatus.Canceled, action => Console.WriteLine("Canceled"));
 
-//for (int i = 0; i < 1; i++)
-//{
-//    int id = i;
-//    _ = dispatcher.ScheduleAsync(id, new Action1 { Result = 1 }, scheduledAt: DateTimeOffset.UtcNow.AddSeconds(1));
-//    _ = Task.Run(async () =>
-//    {
-//        await Task.Delay(Random.Shared.Next(100, 800));
-//        dispatcher.Cancel<int, Action1>(id);
-//    });
-//}
+//dispatcher.Notify(new Action1());
+
+for (int i = 0; i < 1; i++)
+{
+    _ = dispatcher.ScheduleAsync(new Action1 { Result = 1 }, DateTimeOffset.UtcNow.AddSeconds(1));
+    _ = Task.Run(async () =>
+    {
+        await Task.Delay(Random.Shared.Next(100, 800));
+        //dispatcher.Cancel<int, Action1>(id);
+    });
+}
 
 
-Test1(dispatcher, subscriber);
+//Test1(dispatcher, subscriber);
 
 
 //Console.WriteLine(action.Result);

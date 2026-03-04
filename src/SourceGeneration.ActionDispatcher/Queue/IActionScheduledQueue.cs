@@ -1,6 +1,4 @@
-﻿using SourceGeneration.ActionDispatcher.Internal;
-
-namespace SourceGeneration.ActionDispatcher.Queue;
+﻿namespace SourceGeneration.ActionDispatcher.Queue;
 
 internal interface IActionScheduledQueue<TKey, TData>
     where TKey : notnull

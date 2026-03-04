@@ -10,5 +10,5 @@ public enum DispatchStatus
     Succeeded = 8,
     Canceled = 16,
     Faulted = 32,
-    Completed = Succeeded | Canceled | Faulted
+    Completed = Succeeded | Canceled | Faulted,
 }

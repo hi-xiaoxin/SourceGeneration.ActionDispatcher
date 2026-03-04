@@ -35,7 +35,7 @@ internal class ActionScheduledQueue<TKey, TData>(
     {
         if (items == null || items.Count == 0) return;
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         var tasks = items.Select(x => new PersistedTask<TKey, TData>
         {

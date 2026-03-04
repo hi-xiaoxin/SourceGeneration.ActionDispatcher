@@ -14,6 +14,49 @@ internal class DefaultActionDispatcher(ActionExecutor executor, IServiceProvider
         services.GetRequiredService<IActionScheduledQueue<TKey, TData>>().Cancel(id);
     }
 
+    public async ValueTask<Guid> ScheduleAsync<TData>(TData action, long scheduledAtMs = 0)
+        where TData : notnull
+    {
+#if (NET9_0_OR_GREATER)
+        Guid id = Guid.CreateVersion7();
+#else
+        Guid id = Guid.NewGuid();
+#endif
+        await services.GetRequiredService<IActionScheduledQueue<Guid, TData>>().ScheduleAsync([new DispatchItem<Guid, TData>
+        {
+            Id = id,
+            Data = action
+        }], scheduledAtMs).ConfigureAwait(false);
+
+        return id;
+    }
+
+    public async ValueTask<Guid[]> ScheduleAsync<TData>(IReadOnlyList<TData> actions, long scheduledAtMs = 0)
+        where TData : notnull
+    {
+        Guid[] ids = new Guid[actions.Count];
+        DispatchItem<Guid, TData>[] items = new DispatchItem<Guid, TData>[actions.Count];
+        for(int i = 0;i< actions.Count; i++)
+        {
+#if (NET9_0_OR_GREATER)
+            Guid id = Guid.CreateVersion7();
+#else
+            Guid id = Guid.NewGuid();
+#endif
+            ids[i] = id;
+            items[i] = new DispatchItem<Guid, TData>
+            {
+                Id = id,
+                Data = actions[i],
+            };
+
+        }
+
+        await services.GetRequiredService<IActionScheduledQueue<Guid, TData>>().ScheduleAsync(items, scheduledAtMs).ConfigureAwait(false);
+
+        return ids;
+    }
+
     public ValueTask ScheduleAsync<TKey, TData>(TKey id, TData action, long scheduledAtMs = 0)
         where TKey : notnull
         where TData : notnull

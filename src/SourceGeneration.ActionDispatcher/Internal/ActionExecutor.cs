@@ -1,12 +1,12 @@
-﻿using Microsoft.CodeAnalysis;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
+using SourceGeneration.ActionDispatcher.Queue;
 using System.Runtime.ExceptionServices;
 
 namespace SourceGeneration.ActionDispatcher.Internal;
 
 internal class ActionExecutor(IServiceProvider services, ActionSubscriber notifier)
 {
-    public void Notify(object action) => notifier.Notify(DispatchStatus.Completed, action);
+    public void Notify(object action) => notifier.Notify(DispatchStatus.Succeeded, action);
 
     public async void Execute(object action, CancellationToken cancellationToken = default) => await InternalExecuteAsync(action, false, cancellationToken).ConfigureAwait(false);
 
@@ -17,7 +17,9 @@ internal class ActionExecutor(IServiceProvider services, ActionSubscriber notifi
     {
         ArgumentNullException.ThrowIfNull(action, nameof(action));
 
-        notifier.Notify(DispatchStatus.Running, action);
+        object data = action is IActionTaskQueueContext context ? context.Data : action;
+
+        notifier.Notify(DispatchStatus.Running, data);
 
         try
         {
@@ -25,12 +27,12 @@ internal class ActionExecutor(IServiceProvider services, ActionSubscriber notifi
         }
         catch (OperationCanceledException ex)
         {
-            notifier.Notify(DispatchStatus.Canceled, action, ex);
+            notifier.Notify(DispatchStatus.Canceled, data, ex);
             return;
         }
         catch (Exception ex)
         {
-            notifier.Notify(DispatchStatus.Faulted, action, ex);
+            notifier.Notify(DispatchStatus.Faulted, data, ex);
 
             if (throwException)
             {
@@ -39,7 +41,7 @@ internal class ActionExecutor(IServiceProvider services, ActionSubscriber notifi
             return;
         }
 
-        notifier.Notify(DispatchStatus.Succeeded, action);
+        notifier.Notify(DispatchStatus.Succeeded, data);
     }
 
     private async Task ExecuteCoreAsync(object action, CancellationToken cancellationToken)

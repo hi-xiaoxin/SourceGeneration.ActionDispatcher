@@ -1,8 +1,9 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using System.Runtime.CompilerServices;
 
 namespace SourceGeneration.ActionDispatcher.Queue;
 
-internal sealed class BackgroundTask<TKey, TData>(TKey id, TData data) where TKey : notnull where TData : notnull
+internal sealed class BackgroundTask<TKey, TData>(PersistedTask<TKey, TData> task) where TKey : notnull where TData : notnull
 {
     private CancellationTokenSource? _cts;
     private readonly Lock _lock = new();
@@ -10,8 +11,11 @@ internal sealed class BackgroundTask<TKey, TData>(TKey id, TData data) where TKe
     private bool _canceling = false;
     private int _status;
 
-    public TKey Id { get; } = id;
-    public TData Data { get; } = data;
+    public TKey Id { get; } = task.Id;
+    public TData Data { get; } = task.Data;
+    public long ScheduledAtMs { get; } = task.ScheduledAtMs;
+    public long CreatedAt { get; } = task.CreatedAt;
+    public string? Queue { get; } = task.Queue;
 
     public DispatchStatus Status => (DispatchStatus)Volatile.Read(ref _status);
 
@@ -57,9 +61,17 @@ internal sealed class BackgroundTask<TKey, TData>(TKey id, TData data) where TKe
         {
             using var scope = scopeFactory.CreateScope();
 
+            var context = new ActionTaskQueueContext<TKey, TData>
+            {
+                Id = Id,
+                Data = Data,
+                ScheduledAtMs = ScheduledAtMs,
+                CreatedAt = CreatedAt,
+                Queue = task.Queue,
+            };
             await scope.ServiceProvider
                 .GetRequiredService<IActionDispatcher>()
-                .ExecuteAsync(Data!, cancellationToken)
+                .ExecuteAsync(context, cancellationToken)
                 .ConfigureAwait(false);
 
             SetStatus(DispatchStatus.Succeeded);
