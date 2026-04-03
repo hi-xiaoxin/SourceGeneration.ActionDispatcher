@@ -277,8 +277,8 @@ internal class ActionScheduledQueue<TKey, TData>(
             }
 
             // 使用 ManualResetEventSlim 等待并可被 Set 唤醒
-            // 默认最长等待 5 分钟（当没有任务时），避免长时间等待导致的时钟变化问题
-            const long defaultWaitMs = 1000 * 60 * 5L;
+            // 默认最长等待 10 分钟（当没有任务时），避免长时间等待导致的时钟变化问题
+            const long defaultWaitMs = 1000 * 60 * 10L;
 
             try
             {
