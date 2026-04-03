@@ -8,10 +8,14 @@ using SourceGeneration.ActionDispatcher.Test;
 var builder = Host.CreateApplicationBuilder();
 
 builder.Services.AddLogging();
-builder.Services.AddActionDispatcher();
-builder.Services.AddActionQueue<Action1>(options => options.MaxConcurrency = 30);
+builder.Services.AddActionDispatcher(ServiceLifetime.Singleton);
+builder.Services.AddActionQueue<Action1>(options =>
+{
+    options.MaxConcurrency = 30;
+    options.IsPersisted = false;
+});
 
-builder.Services.AddSingleton<IHandler, Handler>();
+builder.Services.AddScoped<IHandler, Handler>();
 var app = builder.Build();
 
 await app.StartAsync();
@@ -19,23 +23,27 @@ await app.StartAsync();
 var dispatcher = app.Services.GetRequiredService<IActionDispatcher>();
 var subscriber = app.Services.GetRequiredService<IActionSubscriber>();
 
+
 subscriber.Subscribe<Action1>(DispatchStatus.WaitingForActivation, action => Console.WriteLine("WaitingForActivation"));
 subscriber.Subscribe<Action1>(DispatchStatus.WaitingToRun, action => Console.WriteLine("WaitingToRun"));
 subscriber.Subscribe<Action1>(DispatchStatus.Running, action => Console.WriteLine("Running"));
 subscriber.Subscribe<Action1>(DispatchStatus.Succeeded, action => Console.WriteLine("Succeeded"));
 subscriber.Subscribe<Action1>(DispatchStatus.Canceled, action => Console.WriteLine("Canceled"));
 
+await dispatcher.EnqueueAsync(new Action1 { Result = 1 });
+
 //dispatcher.Notify(new Action1());
 
-for (int i = 0; i < 1; i++)
-{
-    _ = dispatcher.ScheduleAsync(new Action1 { Result = 1 }, DateTimeOffset.UtcNow.AddSeconds(1));
-    _ = Task.Run(async () =>
-    {
-        await Task.Delay(Random.Shared.Next(100, 800));
-        //dispatcher.Cancel<int, Action1>(id);
-    });
-}
+
+//for (int i = 0; i < 1; i++)
+//{
+//    _ = dispatcher.ScheduleAsync(new Action1 { Result = 1 }, DateTimeOffset.UtcNow.AddSeconds(1));
+//    _ = Task.Run(async () =>
+//    {
+//        await Task.Delay(Random.Shared.Next(100, 800));
+//        //dispatcher.Cancel<int, Action1>(id);
+//    });
+//}
 
 
 //Test1(dispatcher, subscriber);
