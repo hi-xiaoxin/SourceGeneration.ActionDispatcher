@@ -11,7 +11,7 @@ public interface IActionDispatcher
         where TData : notnull
         => ScheduleAsync(action, scheduledAtMs: 0);
 
-    ValueTask<Guid[]> EnqueueAsync<TData>(IReadOnlyList<TData> actions)
+    ValueTask<Guid[]> EnqueueAsync<TData>(TData[] actions)
         where TData : notnull
         => ScheduleAsync(actions, scheduledAtMs: 0);
 
@@ -41,7 +41,7 @@ public interface IActionDispatcher
     ValueTask<Guid> ScheduleAsync<TData>(TData action, long scheduledAtMs = 0)
         where TData : notnull;
 
-    ValueTask<Guid[]> ScheduleAsync<TData>(IReadOnlyList<TData> actions, long scheduledAtMs) 
+    ValueTask<Guid[]> ScheduleAsync<TData>(TData[] actions, long scheduledAtMs) 
         where TData : notnull;
 
     ValueTask ScheduleAsync<TKey, TData>(IEnumerable<DispatchItem<TKey, TData>> items, long scheduledAtMs)
