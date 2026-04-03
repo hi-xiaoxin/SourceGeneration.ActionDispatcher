@@ -1,6 +1,6 @@
 ﻿namespace SourceGeneration.ActionDispatcher.Queue;
 
-internal interface IActionScheduledQueue<TKey, TData>
+public interface IActionScheduledQueue<TKey, TData>
     where TKey : notnull
     where TData : notnull
 {
