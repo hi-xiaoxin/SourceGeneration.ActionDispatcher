@@ -31,12 +31,12 @@ internal class DefaultActionDispatcher(ActionExecutor executor, IServiceProvider
         return id;
     }
 
-    public async ValueTask<Guid[]> ScheduleAsync<TData>(IReadOnlyList<TData> actions, long scheduledAtMs = 0)
+    public async ValueTask<Guid[]> ScheduleAsync<TData>(TData[] actions, long scheduledAtMs = 0)
         where TData : notnull
     {
-        Guid[] ids = new Guid[actions.Count];
-        DispatchItem<Guid, TData>[] items = new DispatchItem<Guid, TData>[actions.Count];
-        for(int i = 0;i< actions.Count; i++)
+        Guid[] ids = new Guid[actions.Length];
+        DispatchItem<Guid, TData>[] items = new DispatchItem<Guid, TData>[actions.Length];
+        for(int i = 0;i< actions.Length; i++)
         {
 #if (NET9_0_OR_GREATER)
             Guid id = Guid.CreateVersion7();
