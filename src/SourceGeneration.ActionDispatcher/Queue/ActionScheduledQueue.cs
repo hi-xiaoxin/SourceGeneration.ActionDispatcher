@@ -5,6 +5,8 @@ using System.Collections.Concurrent;
 
 namespace SourceGeneration.ActionDispatcher.Queue;
 
+#pragma warning disable IDE0028 // 简化集合初始化
+
 internal class ActionScheduledQueue<TKey, TData>(
     ActionQueueOptions options,
     ActionSubscriber notifier,
@@ -300,7 +302,6 @@ internal class ActionScheduledQueue<TKey, TData>(
     internal sealed class AsyncAutoResetEvent : IDisposable
     {
         private readonly SemaphoreSlim _semaphore = new(0, 1);
-        private readonly Lock _lock = new();
 
         public AsyncAutoResetEvent(bool initialState = false)
         {
@@ -326,13 +327,8 @@ internal class ActionScheduledQueue<TKey, TData>(
 
         public void Set()
         {
-            lock (_lock)
-            {
-                if (_semaphore.CurrentCount == 0)
-                {
-                    try { _semaphore.Release(); } catch { }
-                }
-            }
+            if (_semaphore.CurrentCount == 0)
+                try { _semaphore.Release(); } catch { }
         }
 
         public void Dispose()
