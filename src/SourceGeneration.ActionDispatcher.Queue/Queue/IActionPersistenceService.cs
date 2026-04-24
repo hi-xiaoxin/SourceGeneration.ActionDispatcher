@@ -1,4 +1,6 @@
-﻿namespace SourceGeneration.ActionDispatcher;
+﻿using SourceGeneration.ActionDispatcher.Queue;
+
+namespace SourceGeneration.ActionDispatcher;
 
 public interface IActionPersistenceService<TKey, TData> where TKey : notnull where TData :notnull
 {

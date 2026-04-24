@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using SourceGeneration.ActionDispatcher.Queue;
 using System.Runtime.ExceptionServices;
 
 namespace SourceGeneration.ActionDispatcher.Internal;
@@ -17,7 +16,7 @@ internal class ActionExecutor(IServiceProvider services, ActionSubscriber notifi
     {
         ArgumentNullException.ThrowIfNull(action, nameof(action));
 
-        object data = action is IActionTaskQueueContext context ? context.Data : action;
+        object data = action is IActionExecutionContext context ? context.Data : action;
 
         notifier.Notify(DispatchStatus.Running, data);
 

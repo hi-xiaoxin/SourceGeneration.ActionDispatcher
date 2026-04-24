@@ -1,5 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using System.Runtime.CompilerServices;
+using System.Xml.Linq;
 
 namespace SourceGeneration.ActionDispatcher.Queue;
 

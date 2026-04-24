@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFrameworks>net6.0;net7.0;net8.0;net9.0;net10.0</TargetFrameworks>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<LangVersion>14</LangVersion>
+		<RootNamespace>SourceGeneration.ActionDispatcher</RootNamespace>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SourceGeneration.ActionDispatcher\SourceGeneration.ActionDispatcher.csproj" />
+	</ItemGroup>
+
+</Project>

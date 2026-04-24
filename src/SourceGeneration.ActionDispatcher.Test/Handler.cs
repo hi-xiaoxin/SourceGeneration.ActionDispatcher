@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Logging;
-using SourceGeneration.ActionDispatcher.Queue;
 
 namespace SourceGeneration.ActionDispatcher.Test;
 
