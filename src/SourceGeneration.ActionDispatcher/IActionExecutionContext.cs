@@ -2,5 +2,5 @@
 
 internal interface IActionExecutionContext
 {
-    object Data { get; }
+    object Action { get; }
 }

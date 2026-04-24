@@ -10,38 +10,30 @@ public static class ActionQueueDispatcherServiceCollectionExtensions
 {
     extension(IServiceCollection services)
     {
-        public IServiceCollection AddActionQueue<TKey, TData>(Action<ActionQueueOptions>? optionsAction = null)
-            where TKey : notnull
-            where TData : notnull
+        public IServiceCollection AddActionQueue<TAction>(Action<ActionQueueOptions<TAction>>? optionsAction = null) where TAction : notnull
         {
-            ActionQueueOptions options = new();
+            ActionQueueOptions<TAction> options = new();
             optionsAction?.Invoke(options);
 
-            services.AddSingleton(sp => new ActionQueue<TKey, TData>(options,
+            services.AddSingleton(sp => new ActionQueue<TAction>(options,
                 sp.GetRequiredService<ActionSubscriber>(),
-                sp.GetRequiredService<IActionPersistenceService<TKey, TData>>(),
+                sp.GetRequiredService<IActionPersistenceService<TAction>>(),
                 sp.GetRequiredService<IServiceScopeFactory>(),
-                sp.GetRequiredService<ILogger<ActionQueue<TKey, TData>>>()));
+                sp.GetRequiredService<ILogger<ActionQueue<TAction>>>()));
 
-            services.AddSingleton(sp => new ActionScheduledQueue<TKey, TData>(options,
+            services.AddSingleton(sp => new ActionScheduledQueue<TAction>(options,
                 sp.GetRequiredService<ActionSubscriber>(),
-                sp.GetRequiredService<ActionQueue<TKey, TData>>(),
-                sp.GetRequiredService<IActionPersistenceService<TKey, TData>>(),
-                sp.GetRequiredService<ILogger<ActionScheduledQueue<TKey, TData>>>()));
+                sp.GetRequiredService<ActionQueue<TAction>>(),
+                sp.GetRequiredService<IActionPersistenceService<TAction>>(),
+                sp.GetRequiredService<ILogger<ActionScheduledQueue<TAction>>>()));
 
-            services.AddSingleton<IActionScheduledQueue<TKey, TData>>(sp => sp.GetRequiredService<ActionScheduledQueue<TKey, TData>>());
-            services.AddHostedService(sp => sp.GetRequiredService<ActionQueue<TKey, TData>>());
-            services.AddHostedService(sp => sp.GetRequiredService<ActionScheduledQueue<TKey, TData>>());
+            services.AddSingleton<IActionScheduledQueue<TAction>>(sp => sp.GetRequiredService<ActionScheduledQueue<TAction>>());
+            services.AddHostedService(sp => sp.GetRequiredService<ActionQueue<TAction>>());
+            services.AddHostedService(sp => sp.GetRequiredService<ActionScheduledQueue<TAction>>());
 
-            services.TryAddSingleton(typeof(IActionPersistenceService<,>), typeof(NopBackgroundTaskPersistenceService<,>));
+            services.TryAddSingleton<IActionPersistenceService<TAction>, NopBackgroundTaskPersistenceService<TAction>>();
 
             return services;
-        }
-
-        public IServiceCollection AddActionQueue<TData>(Action<ActionQueueOptions>? optionsAction = null)
-            where TData : notnull
-        {
-            return services.AddActionQueue<Guid,TData>(optionsAction);
         }
     }
 }

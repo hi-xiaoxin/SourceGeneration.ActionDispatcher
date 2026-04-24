@@ -1,9 +1,8 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using System.Xml.Linq;
 
 namespace SourceGeneration.ActionDispatcher.Queue;
 
-internal sealed class BackgroundTask<TKey, TData>(PersistedTask<TKey, TData> task) where TKey : notnull where TData : notnull
+internal sealed class BackgroundTask<TAction>(PersistedTask<TAction> task) where TAction : notnull
 {
     private CancellationTokenSource? _cts;
     private readonly Lock _lock = new();
@@ -11,10 +10,9 @@ internal sealed class BackgroundTask<TKey, TData>(PersistedTask<TKey, TData> tas
     private bool _canceling = false;
     private int _status;
 
-    public TKey Id { get; } = task.Id;
-    public TData Data { get; } = task.Data;
-    public long ScheduledAtMs { get; } = task.ScheduledAtMs;
-    public long CreatedAt { get; } = task.CreatedAt;
+    public TAction Data { get; } = task.Action;
+    public long ScheduledAtMs { get; } = task.ScheduledMs;
+    public long CreatedAt { get; } = task.CreatedMs;
     public string? Queue { get; } = task.Queue;
 
     public DispatchStatus Status => (DispatchStatus)Volatile.Read(ref _status);
@@ -61,10 +59,9 @@ internal sealed class BackgroundTask<TKey, TData>(PersistedTask<TKey, TData> tas
         {
             using var scope = scopeFactory.CreateScope();
 
-            var context = new ActionTaskQueueContext<TKey, TData>
+            var context = new ActionTaskQueueContext<TAction>
             {
-                Id = Id,
-                Data = Data,
+                Action = Data,
                 ScheduledAtMs = ScheduledAtMs,
                 CreatedAt = CreatedAt,
                 Queue = task.Queue,

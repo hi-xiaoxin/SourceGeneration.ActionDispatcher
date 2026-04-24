@@ -7,45 +7,43 @@ namespace SourceGeneration.ActionDispatcher.Queue;
 
 #pragma warning disable IDE0028 // 简化集合初始化
 
-internal class ActionScheduledQueue<TKey, TData>(
-    ActionQueueOptions options,
+internal class ActionScheduledQueue<TAction>(
+    ActionQueueOptions<TAction> options,
     ActionSubscriber notifier,
-    ActionQueue<TKey, TData> queue,
-    IActionPersistenceService<TKey, TData> store,
-    ILogger<ActionScheduledQueue<TKey, TData>> logger)
-    : IHostedService, IActionScheduledQueue<TKey, TData>
-    where TData : notnull
-    where TKey : notnull
+    ActionQueue<TAction> queue,
+    IActionPersistenceService<TAction> store,
+    ILogger<ActionScheduledQueue<TAction>> logger)
+    : IHostedService, IActionScheduledQueue<TAction> where TAction : notnull
 {
     private readonly Lock _lock = new();
 
-    private readonly ILogger<ActionScheduledQueue<TKey, TData>> _logger = logger;
+    private readonly ILogger<ActionScheduledQueue<TAction>> _logger = logger;
     private readonly ActionSubscriber _notifier = notifier;
     private readonly PriorityQueue<long, long> _pq = new();
-    private readonly Dictionary<long, List<PersistedTask<TKey, TData>>> _scheduledMap = [];
-    private readonly ConcurrentDictionary<TKey, long> _scheduledIndexById = new();
+    private readonly Dictionary<long, List<PersistedTask<TAction>>> _scheduledMap = [];
+    private readonly ConcurrentDictionary<object, long> _scheduledIndexById = new();
 
     private readonly bool _persisted = options.IsPersisted;
     private readonly string? _queue = options.QueueName;
+    private readonly Func<TAction, object> _idSelector = options.IdSelector ?? (static x => x);
 
     private readonly AsyncAutoResetEvent _signal = new(false);
     private CancellationTokenSource? _stoppingCts;
 
     private Task? _schedulerLoopTask;
 
-    public async ValueTask ScheduleAsync(IReadOnlyList<DispatchItem<TKey, TData>> items, long scheduledAtMs = 0)
+    public async ValueTask ScheduleAsync(IReadOnlyList<TAction> items, long scheduledMs = 0)
     {
         if (items == null || items.Count == 0) return;
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        var tasks = items.Select(x => new PersistedTask<TKey, TData>
+        var tasks = items.Select(x => new PersistedTask<TAction>
         {
-            Id = x.Id,
-            CreatedAt = now,
-            Data = x.Data,
+            Action = x,
             Queue = _queue,
-            ScheduledAtMs = scheduledAtMs,
+            CreatedMs = now,
+            ScheduledMs = scheduledMs,
         }).ToList();
 
         if (_persisted)
@@ -53,46 +51,45 @@ internal class ActionScheduledQueue<TKey, TData>(
             await store.SaveTaskAsync(tasks).ConfigureAwait(false);
         }
 
-// Simple async auto-reset event
-
-        if (scheduledAtMs == 0 || scheduledAtMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+        if (scheduledMs <= now)
         {
             await queue.EnqueueCoreAsync(tasks).ConfigureAwait(false);
         }
         else
         {
-            await ScheduleCoreAsync(tasks, scheduledAtMs).ConfigureAwait(false);
+            await ScheduleCoreAsync(tasks, scheduledMs).ConfigureAwait(false);
         }
     }
 
-    private async ValueTask ScheduleCoreAsync(List<PersistedTask<TKey, TData>> tasks, long scheduledAtMs)
+    private async ValueTask ScheduleCoreAsync(List<PersistedTask<TAction>> tasks, long scheduledMs)
     {
         bool shouldWake = false;
 
         foreach (var task in tasks)
         {
-            _notifier.Notify(DispatchStatus.WaitingForActivation, task.Data!);
+            _notifier.Notify(DispatchStatus.WaitingForActivation, task.Action!);
         }
 
         lock (_lock)
         {
             var previousEarliest = _pq.Count > 0 ? _pq.Peek() : (long?)null;
 
-            if (!_scheduledMap.TryGetValue(scheduledAtMs, out var list))
+            if (!_scheduledMap.TryGetValue(scheduledMs, out var list))
             {
-                list = new List<PersistedTask<TKey, TData>>(tasks.Count);
-                _scheduledMap[scheduledAtMs] = list;
-                _pq.Enqueue(scheduledAtMs, scheduledAtMs);
+                list = new List<PersistedTask<TAction>>(tasks.Count);
+                _scheduledMap[scheduledMs] = list;
+                _pq.Enqueue(scheduledMs, scheduledMs);
             }
             list.AddRange(tasks);
 
             // 更新索引（在锁内添加映射，确保一致性）      
             foreach (var t in tasks)
             {
-                _scheduledIndexById.TryAdd(t.Id, scheduledAtMs);
+                var id = _idSelector(t.Action);
+                _scheduledIndexById.TryAdd(id, scheduledMs);
             }
 
-            if (!previousEarliest.HasValue || scheduledAtMs < previousEarliest.Value)
+            if (!previousEarliest.HasValue || scheduledMs < previousEarliest.Value)
             {
                 shouldWake = true;
             }
@@ -105,7 +102,7 @@ internal class ActionScheduledQueue<TKey, TData>(
         }
     }
 
-    public bool Cancel(TKey taskId)
+    public bool Cancel(object taskId)
     {
         if (_persisted)
         {
@@ -131,7 +128,7 @@ internal class ActionScheduledQueue<TKey, TData>(
             return queue.Cancel(taskId);
         }
 
-        PersistedTask<TKey, TData>? removed = null;
+        PersistedTask<TAction>? removed = null;
         lock (_lock)
         {
             if (_scheduledMap.TryGetValue(scheduledAt, out var list))
@@ -139,25 +136,27 @@ internal class ActionScheduledQueue<TKey, TData>(
                 for (int i = list.Count - 1; i >= 0; i--)
                 {
                     removed = list[i];
-                    if (removed.Id.Equals(taskId))
+                    var id = _idSelector(removed.Action);
+
+                    if (id.Equals(taskId))
                     {
                         list.RemoveAt(i);
                         break;
                     }
                 }
 
-                    if (list.Count == 0)
-                    {
-                        _scheduledMap.Remove(scheduledAt);
-                        // 标记唤醒以便 scheduler 重新计算下次触发（因为 earliest 可能变化）
-                        try { _signal.Set(); } catch { }
-                    }
+                if (list.Count == 0)
+                {
+                    _scheduledMap.Remove(scheduledAt);
+                    // 标记唤醒以便 scheduler 重新计算下次触发（因为 earliest 可能变化）
+                    try { _signal.Set(); } catch { }
+                }
             }
         }
 
         if (removed != null)
         {
-            _notifier.Notify(DispatchStatus.Canceled, removed.Data);
+            _notifier.Notify(DispatchStatus.Canceled, removed.Action);
             return true;
         }
 
@@ -175,7 +174,7 @@ internal class ActionScheduledQueue<TKey, TData>(
             var tasks = await store.GetScheduledTasksAsync(_queue, cancellationToken).ConfigureAwait(false);
             if (tasks != null && tasks.Count > 0)
             {
-                foreach (var group in tasks.GroupBy(x => x.ScheduledAtMs).OrderBy(x => x.Key))
+                foreach (var group in tasks.GroupBy(x => x.ScheduledMs).OrderBy(x => x.Key))
                 {
                     await ScheduleCoreAsync([.. group], group.Key).ConfigureAwait(false);
                 }
@@ -216,7 +215,7 @@ internal class ActionScheduledQueue<TKey, TData>(
         while (!cancellationToken.IsCancellationRequested)
         {
             long? waitUntil = null;
-            List<List<PersistedTask<TKey, TData>>>? listsToFire = null;
+            List<List<PersistedTask<TAction>>>? listsToFire = null;
 
             lock (_lock)
             {
@@ -238,7 +237,7 @@ internal class ActionScheduledQueue<TKey, TData>(
 
                         if (timesToRemove.Count > 0)
                         {
-                            listsToFire = new List<List<PersistedTask<TKey, TData>>>(timesToRemove.Count);
+                            listsToFire = new List<List<PersistedTask<TAction>>>(timesToRemove.Count);
                             foreach (var t in timesToRemove)
                             {
                                 if (_scheduledMap.TryGetValue(t, out var list))
@@ -256,14 +255,15 @@ internal class ActionScheduledQueue<TKey, TData>(
             if (listsToFire != null && listsToFire.Count > 0)
             {
                 // 在锁外合并并触发，减少临界区时间
-                List<PersistedTask<TKey, TData>> toFire = [];
+                List<PersistedTask<TAction>> toFire = [];
                 foreach (var l in listsToFire)
                     toFire.AddRange(l);
 
                 // 移除索引条目（已经从 scheduledMap 移除），避免内存增长
                 foreach (var t in toFire)
                 {
-                    _scheduledIndexById.TryRemove(t.Id, out _);
+                    var id = _idSelector(t.Action);
+                    _scheduledIndexById.TryRemove(id, out _);
                 }
 
                 try
@@ -302,6 +302,7 @@ internal class ActionScheduledQueue<TKey, TData>(
     internal sealed class AsyncAutoResetEvent : IDisposable
     {
         private readonly SemaphoreSlim _semaphore = new(0, 1);
+        private bool _isDisposed;
 
         public AsyncAutoResetEvent(bool initialState = false)
         {
@@ -314,26 +315,33 @@ internal class ActionScheduledQueue<TKey, TData>(
 
         public async Task WaitAsync(int millisecondsTimeout, CancellationToken cancellationToken)
         {
-            if (millisecondsTimeout == Timeout.Infinite)
+#if NET7_0_OR_GREATER
+            ObjectDisposedException.ThrowIf(_isDisposed, this);
+#else
+            if(_isDisposed) throw new ObjectDisposedException(nameof(AsyncAutoResetEvent));
+#endif
+
+            if (millisecondsTimeout <= 0)
             {
                 await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-                return;
             }
-
-            // WaitAsync(TimeSpan, CancellationToken) returns Task<bool>
-            await _semaphore.WaitAsync(TimeSpan.FromMilliseconds(millisecondsTimeout), cancellationToken).ConfigureAwait(false);
-            // if timed out, just return
+            else
+            {
+                await _semaphore.WaitAsync(millisecondsTimeout, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         public void Set()
         {
-            if (_semaphore.CurrentCount == 0)
-                try { _semaphore.Release(); } catch { }
+            if (_isDisposed || _semaphore.CurrentCount != 0) return;
+            try { _semaphore.Release(); } catch { }
         }
 
         public void Dispose()
         {
+            if (_isDisposed) return;
             _semaphore.Dispose();
+            _isDisposed = true;
         }
     }
 

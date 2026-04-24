@@ -16,13 +16,27 @@ internal class ActionExecutor(IServiceProvider services, ActionSubscriber notifi
     {
         ArgumentNullException.ThrowIfNull(action, nameof(action));
 
-        object data = action is IActionExecutionContext context ? context.Data : action;
+        object data;
+        if(action is IActionExecutionContext context)
+        {
+            data = context.Action;
+        }
+        else 
+        {
+            context = null!;
+            data = action;
+        }
 
         notifier.Notify(DispatchStatus.Running, data);
 
         try
         {
-            await ExecuteCoreAsync(action, cancellationToken);
+            if (context != null)
+            {
+                await ExecuteCoreAsync(context, cancellationToken).ConfigureAwait(false);
+            }
+
+            await ExecuteCoreAsync(data, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException ex)
         {

@@ -1,7 +1,7 @@
 ﻿namespace SourceGeneration.ActionDispatcher.Queue;
 
-public interface IActionScheduledQueue<TKey, TData> where TKey : notnull where TData : notnull
+public interface IActionScheduledQueue<TAction> where TAction : notnull
 {
-    ValueTask ScheduleAsync(IReadOnlyList<DispatchItem<TKey, TData>> items, long scheduledAtMs = 0);
-    bool Cancel(TKey taskId);
+    ValueTask ScheduleAsync(IReadOnlyList<TAction> items, long scheduledMs = 0);
+    bool Cancel(object taskId);
 }

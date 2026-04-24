@@ -12,6 +12,7 @@ public static class ActionDispatcherServiceCollectionExtensions
     {
         public IServiceCollection AddActionDispatcher(ServiceLifetime dispatcherLifetime = ServiceLifetime.Scoped, ServiceLifetime subscriberLifetime = ServiceLifetime.Singleton)
         {
+            services.AddLogging();
             services.Add(new ServiceDescriptor(typeof(IActionDispatcher), typeof(DefaultActionDispatcher), dispatcherLifetime));
             services.Add(new ServiceDescriptor(typeof(ActionExecutor), typeof(ActionExecutor), dispatcherLifetime));
             services.TryAdd(new ServiceDescriptor(typeof(ActionSubscriber), typeof(ActionSubscriber), subscriberLifetime));

@@ -9,10 +9,12 @@ var builder = Host.CreateApplicationBuilder();
 
 builder.Services.AddLogging();
 builder.Services.AddActionDispatcher(ServiceLifetime.Singleton);
+
 builder.Services.AddActionQueue<Action1>(options =>
 {
     options.MaxConcurrency = 30;
     options.IsPersisted = false;
+    options.IdSelector = x => x.Id;
 });
 
 builder.Services.AddScoped<IHandler, Handler>();
@@ -72,17 +74,18 @@ static void Test1(IActionDispatcher dispatcher, IActionSubscriber subscriber)
     var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     for (int i = 0; i < loop; i++)
     {
-        var items = Enumerable.Range(0, batch).Select(x => new DispatchItem<int, Action1>
+        var items = Enumerable.Range(0, batch).Select(x => new Action1
         {
             Id = x,
-            Data = new Action1 { Result = x * (i + 1) },
-        }).ToList();
+            Result = x * (i + 1),
+        }).ToArray();
 
-        _ = dispatcher.ScheduleAsync<int, Action1>(items, now + Random.Shared.Next(100, 5000));
+        _ = dispatcher.ScheduleAsync(items, now + Random.Shared.Next(100, 5000));
     }
 }
 
 class Action1
 {
+    public int Id;
     public int Result;
 };

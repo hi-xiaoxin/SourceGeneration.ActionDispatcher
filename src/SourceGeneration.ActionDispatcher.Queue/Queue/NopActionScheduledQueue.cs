@@ -2,17 +2,16 @@
 
 namespace SourceGeneration.ActionDispatcher.Queue;
 
-internal class NopActionScheduledQueue<TKey, TData>(ActionExecutor executor) : IActionScheduledQueue<TKey, TData>
-    where TKey : notnull
-    where TData : notnull
+internal class NopActionScheduledQueue<TAction>(ActionExecutor executor) : IActionScheduledQueue<TAction>
+    where TAction : notnull
 {
-    public bool Cancel(TKey taskId) => false;
+    public bool Cancel(object taskId) => false;
 
-    public ValueTask ScheduleAsync(IReadOnlyList<DispatchItem<TKey, TData>> items, long scheduledAtMs = 0)
+    public ValueTask ScheduleAsync(IReadOnlyList<TAction> items, long scheduledMs = 0)
     {
         foreach(var item in items)
         {
-            executor.Execute(item.Data);
+            executor.Execute(item);
         }
         return ValueTask.CompletedTask;
     }

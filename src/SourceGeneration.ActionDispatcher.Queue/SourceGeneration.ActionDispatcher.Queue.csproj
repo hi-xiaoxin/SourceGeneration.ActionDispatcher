@@ -6,8 +6,32 @@
 		<Nullable>enable</Nullable>
 		<LangVersion>14</LangVersion>
 		<RootNamespace>SourceGeneration.ActionDispatcher</RootNamespace>
+
+		<Version>2.0.0-beta250424</Version>
+
+		<Authors>SourceGeneration</Authors>
+		<Description>Action dispatch and subscribe framework</Description>
+		<RepositoryUrl>https://github.com/SourceGeneration/ActionDispatcher</RepositoryUrl>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageProjectUrl>https://github.com/SourceGeneration/ActionDispatcher</PackageProjectUrl>
+		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageOutputPath>./../../../nupkg</PackageOutputPath>
+		<PackageIcon>sg.png</PackageIcon>
+		<PackageTags>action,message,command,event,mediator,dispatcher,subscrbier,source generatior,aot</PackageTags>
+
 	</PropertyGroup>
 
+	<ItemGroup>
+		<None Include=".\..\..\sg.png">
+			<Pack>True</Pack>
+			<PackagePath>\</PackagePath>
+			<Visible>false</Visible>
+		</None>
+		<None Include=".\..\..\README.md" Pack="true" PackagePath="\" />
+	</ItemGroup>
+	
 	<ItemGroup>
 		<ProjectReference Include="..\SourceGeneration.ActionDispatcher\SourceGeneration.ActionDispatcher.csproj" />
 	</ItemGroup>

@@ -1,7 +1,7 @@
 ﻿namespace SourceGeneration.ActionDispatcher;
 
 [Flags]
-public enum DispatchStatus
+public enum DispatchStatus : byte
 {
     Created = 0,
     WaitingForActivation = 1,
