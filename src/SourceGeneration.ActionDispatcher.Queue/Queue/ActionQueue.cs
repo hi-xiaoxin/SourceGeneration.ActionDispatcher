@@ -19,7 +19,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
 {
     private readonly ActionSubscriber _notifier;
     private readonly Channel<TAction> _channel;
-    private readonly ConcurrentDictionary<object, BackgroundTask<TAction>> _runningsById = new();
+    private readonly ConcurrentDictionary<object, ActionBackgroundTask<TAction>> _runningsById = new();
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IActionQueuePersistenceService _persistenceService;
@@ -69,25 +69,25 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
         return false;
     }
 
-    public async ValueTask EnqueueAsync(IReadOnlyList<PersistedTask<TAction>> tasks)
-    {
-        if (tasks == null || tasks.Count == 0) return;
+    //public async ValueTask EnqueueAsync(IReadOnlyList<PersistedTask<TAction>> tasks)
+    //{
+    //    if (tasks == null || tasks.Count == 0) return;
 
-        if (_persisted)
-        {
-            await _persistenceService.SaveTaskAsync(tasks).ConfigureAwait(false);
-        }
+    //    if (_persisted)
+    //    {
+    //        await _persistenceService.SaveTaskAsync(tasks).ConfigureAwait(false);
+    //    }
 
-        await EnqueueCoreAsync(tasks).ConfigureAwait(false);
-    }
+    //    await EnqueueCoreAsync(tasks).ConfigureAwait(false);
+    //}
 
-    internal async Task EnqueueCoreAsync(IReadOnlyList<PersistedTask<TAction>> tasks)
+    internal async Task EnqueueCoreAsync(IReadOnlyList<PersistedActionTask<TAction>> tasks)
     {
         foreach (var task in tasks)
         {
             var action = task.Action;
             var id = _idSelector(action);
-            var backgroundTask = new BackgroundTask<TAction>(task);
+            var backgroundTask = new ActionBackgroundTask<TAction>(task);
 
             if (_runningsById.TryAdd(id, backgroundTask))
             {

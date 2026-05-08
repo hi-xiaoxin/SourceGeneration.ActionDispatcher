@@ -7,20 +7,20 @@ namespace SourceGeneration.ActionDispatcher.Queue;
 
 #pragma warning disable IDE0028 // 简化集合初始化
 
-internal class ActionScheduledQueue<TAction>(
+internal class ActionQueueScheduler<TAction>(
     ActionQueueOptions<TAction> options,
     ActionSubscriber notifier,
     ActionQueue<TAction> queue,
     IActionQueuePersistenceService store,
-    ILogger<ActionScheduledQueue<TAction>> logger)
-    : IHostedService, IActionScheduledQueue<TAction> where TAction : notnull
+    ILogger<ActionQueueScheduler<TAction>> logger)
+    : IHostedService, IActionQueueScheduler<TAction> where TAction : notnull
 {
     private readonly Lock _lock = new();
 
-    private readonly ILogger<ActionScheduledQueue<TAction>> _logger = logger;
+    private readonly ILogger<ActionQueueScheduler<TAction>> _logger = logger;
     private readonly ActionSubscriber _notifier = notifier;
     private readonly PriorityQueue<long, long> _pq = new();
-    private readonly Dictionary<long, List<PersistedTask<TAction>>> _scheduledMap = [];
+    private readonly Dictionary<long, List<PersistedActionTask<TAction>>> _scheduledMap = [];
     private readonly ConcurrentDictionary<object, long> _scheduledIndexById = new();
 
     private readonly bool _persisted = options.IsPersisted;
@@ -38,8 +38,9 @@ internal class ActionScheduledQueue<TAction>(
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        var tasks = items.Select(x => new PersistedTask<TAction>
+        var tasks = items.Select(x => new PersistedActionTask<TAction>
         {
+            Key = _idSelector(x),
             Action = x,
             Queue = _queue,
             CreatedMs = now,
@@ -61,7 +62,7 @@ internal class ActionScheduledQueue<TAction>(
         }
     }
 
-    private async ValueTask ScheduleCoreAsync(List<PersistedTask<TAction>> tasks, long scheduledMs)
+    private async ValueTask ScheduleCoreAsync(List<PersistedActionTask<TAction>> tasks, long scheduledMs)
     {
         bool shouldWake = false;
 
@@ -76,7 +77,7 @@ internal class ActionScheduledQueue<TAction>(
 
             if (!_scheduledMap.TryGetValue(scheduledMs, out var list))
             {
-                list = new List<PersistedTask<TAction>>(tasks.Count);
+                list = new List<PersistedActionTask<TAction>>(tasks.Count);
                 _scheduledMap[scheduledMs] = list;
                 _pq.Enqueue(scheduledMs, scheduledMs);
             }
@@ -128,7 +129,7 @@ internal class ActionScheduledQueue<TAction>(
             return queue.Cancel(taskId);
         }
 
-        PersistedTask<TAction>? removed = null;
+        PersistedActionTask<TAction>? removed = null;
         lock (_lock)
         {
             if (_scheduledMap.TryGetValue(scheduledAt, out var list))
@@ -215,7 +216,7 @@ internal class ActionScheduledQueue<TAction>(
         while (!cancellationToken.IsCancellationRequested)
         {
             long? waitUntil = null;
-            List<List<PersistedTask<TAction>>>? listsToFire = null;
+            List<List<PersistedActionTask<TAction>>>? listsToFire = null;
 
             lock (_lock)
             {
@@ -237,7 +238,7 @@ internal class ActionScheduledQueue<TAction>(
 
                         if (timesToRemove.Count > 0)
                         {
-                            listsToFire = new List<List<PersistedTask<TAction>>>(timesToRemove.Count);
+                            listsToFire = new List<List<PersistedActionTask<TAction>>>(timesToRemove.Count);
                             foreach (var t in timesToRemove)
                             {
                                 if (_scheduledMap.TryGetValue(t, out var list))
@@ -255,7 +256,7 @@ internal class ActionScheduledQueue<TAction>(
             if (listsToFire != null && listsToFire.Count > 0)
             {
                 // 在锁外合并并触发，减少临界区时间
-                List<PersistedTask<TAction>> toFire = [];
+                List<PersistedActionTask<TAction>> toFire = [];
                 foreach (var l in listsToFire)
                     toFire.AddRange(l);
 
@@ -315,11 +316,10 @@ internal class ActionScheduledQueue<TAction>(
 
         public async Task WaitAsync(int millisecondsTimeout, CancellationToken cancellationToken)
         {
-#if NET7_0_OR_GREATER
-            ObjectDisposedException.ThrowIf(_isDisposed, this);
-#else
-            if(_isDisposed) throw new ObjectDisposedException(nameof(AsyncAutoResetEvent));
-#endif
+#pragma warning disable CA1513 
+            if (_isDisposed) 
+                throw new ObjectDisposedException(nameof(AsyncAutoResetEvent));
+#pragma warning restore CA1513
 
             if (millisecondsTimeout <= 0)
             {

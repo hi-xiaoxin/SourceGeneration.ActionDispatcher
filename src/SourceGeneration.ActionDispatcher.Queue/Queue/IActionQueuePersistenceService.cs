@@ -4,9 +4,9 @@ namespace SourceGeneration.ActionDispatcher;
 
 public interface IActionQueuePersistenceService
 {
-    Task SaveTaskAsync<TAction>(IEnumerable<PersistedTask<TAction>> tasks, CancellationToken cancellationToken = default) where TAction : notnull;
-    Task<List<PersistedTask<TAction>>> GetExecutableTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull;
-    Task<List<PersistedTask<TAction>>> GetScheduledTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull;
+    Task SaveTaskAsync<TAction>(IEnumerable<PersistedActionTask<TAction>> tasks, CancellationToken cancellationToken = default) where TAction : notnull;
+    Task<List<PersistedActionTask<TAction>>> GetExecutableTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull;
+    Task<List<PersistedActionTask<TAction>>> GetScheduledTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull;
     Task DeleteTaskAsync(string? queueName, object id, CancellationToken cancellationToken = default);
 }
 
@@ -17,17 +17,17 @@ internal sealed class ActionQueueNopPersistenceService : IActionQueuePersistence
         return Task.CompletedTask;
     }
 
-    public Task<List<PersistedTask<TAction>>> GetExecutableTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull
+    public Task<List<PersistedActionTask<TAction>>> GetExecutableTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull
     {
-        return Task.FromResult<List<PersistedTask<TAction>>>([]);
+        return Task.FromResult<List<PersistedActionTask<TAction>>>([]);
     }
 
-    public Task<List<PersistedTask<TAction>>> GetScheduledTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull
+    public Task<List<PersistedActionTask<TAction>>> GetScheduledTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull
     {
-        return Task.FromResult<List<PersistedTask<TAction>>>([]);
+        return Task.FromResult<List<PersistedActionTask<TAction>>>([]);
     }
 
-    public Task SaveTaskAsync<TAction>(IEnumerable<PersistedTask<TAction>> tasks, CancellationToken cancellationToken = default) where TAction : notnull
+    public Task SaveTaskAsync<TAction>(IEnumerable<PersistedActionTask<TAction>> tasks, CancellationToken cancellationToken = default) where TAction : notnull
     {
         return Task.CompletedTask;
     }
