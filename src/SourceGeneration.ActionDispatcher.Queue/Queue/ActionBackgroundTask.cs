@@ -2,7 +2,7 @@
 
 namespace SourceGeneration.ActionDispatcher.Queue;
 
-internal sealed class ActionBackgroundTask<TAction>(PersistedActionTask<TAction> task) where TAction : notnull
+internal sealed class ActionBackgroundTask<TAction>(ActionTask<TAction> task) where TAction : notnull
 {
     private CancellationTokenSource? _cts;
     private readonly Lock _lock = new();
@@ -10,7 +10,7 @@ internal sealed class ActionBackgroundTask<TAction>(PersistedActionTask<TAction>
     private bool _canceling = false;
     private int _status;
 
-    public TAction Data { get; } = task.Action;
+    public TAction Action { get; } = task.Action;
     public long ScheduledAtMs { get; } = task.ScheduledMs;
     public long CreatedAt { get; } = task.CreatedMs;
     public string? Queue { get; } = task.Queue;
@@ -61,7 +61,7 @@ internal sealed class ActionBackgroundTask<TAction>(PersistedActionTask<TAction>
 
             var context = new ActionTaskQueueContext<TAction>
             {
-                Action = Data,
+                Action = Action,
                 ScheduledAtMs = ScheduledAtMs,
                 CreatedAt = CreatedAt,
                 Queue = task.Queue,
