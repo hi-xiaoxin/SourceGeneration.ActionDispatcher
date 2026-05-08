@@ -11,7 +11,7 @@ internal class ActionScheduledQueue<TAction>(
     ActionQueueOptions<TAction> options,
     ActionSubscriber notifier,
     ActionQueue<TAction> queue,
-    IActionPersistenceService<TAction> store,
+    IActionQueuePersistenceService store,
     ILogger<ActionScheduledQueue<TAction>> logger)
     : IHostedService, IActionScheduledQueue<TAction> where TAction : notnull
 {
@@ -111,7 +111,7 @@ internal class ActionScheduledQueue<TAction>(
             {
                 try
                 {
-                    await store.DeleteTaskAsync(taskId, CancellationToken.None).ConfigureAwait(false);
+                    await store.DeleteTaskAsync(_queue, taskId, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -171,7 +171,7 @@ internal class ActionScheduledQueue<TAction>(
 
         if (_persisted)
         {
-            var tasks = await store.GetScheduledTasksAsync(_queue, cancellationToken).ConfigureAwait(false);
+            var tasks = await store.GetScheduledTasksAsync<TAction>(_queue, cancellationToken).ConfigureAwait(false);
             if (tasks != null && tasks.Count > 0)
             {
                 foreach (var group in tasks.GroupBy(x => x.ScheduledMs).OrderBy(x => x.Key))

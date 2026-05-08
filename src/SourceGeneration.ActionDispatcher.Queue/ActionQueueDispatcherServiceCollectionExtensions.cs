@@ -17,21 +17,21 @@ public static class ActionQueueDispatcherServiceCollectionExtensions
 
             services.AddSingleton(sp => new ActionQueue<TAction>(options,
                 sp.GetRequiredService<ActionSubscriber>(),
-                sp.GetRequiredService<IActionPersistenceService<TAction>>(),
+                sp.GetRequiredService<IActionQueuePersistenceService>(),
                 sp.GetRequiredService<IServiceScopeFactory>(),
                 sp.GetRequiredService<ILogger<ActionQueue<TAction>>>()));
 
             services.AddSingleton(sp => new ActionScheduledQueue<TAction>(options,
                 sp.GetRequiredService<ActionSubscriber>(),
                 sp.GetRequiredService<ActionQueue<TAction>>(),
-                sp.GetRequiredService<IActionPersistenceService<TAction>>(),
+                sp.GetRequiredService<IActionQueuePersistenceService>(),
                 sp.GetRequiredService<ILogger<ActionScheduledQueue<TAction>>>()));
 
             services.AddSingleton<IActionScheduledQueue<TAction>>(sp => sp.GetRequiredService<ActionScheduledQueue<TAction>>());
             services.AddHostedService(sp => sp.GetRequiredService<ActionQueue<TAction>>());
             services.AddHostedService(sp => sp.GetRequiredService<ActionScheduledQueue<TAction>>());
 
-            services.TryAddSingleton<IActionPersistenceService<TAction>, NopBackgroundTaskPersistenceService<TAction>>();
+            services.TryAddSingleton<IActionQueuePersistenceService, ActionQueueNopPersistenceService>();
 
             return services;
         }

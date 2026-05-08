@@ -22,7 +22,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
     private readonly ConcurrentDictionary<object, BackgroundTask<TAction>> _runningsById = new();
 
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IActionPersistenceService<TAction> _persistenceService;
+    private readonly IActionQueuePersistenceService _persistenceService;
     private readonly ILogger<ActionQueue<TAction>> _logger;
     private readonly int _maxConcurrency;
     private readonly bool _persisted;
@@ -35,7 +35,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
     public ActionQueue(
         ActionQueueOptions<TAction> options,
         ActionSubscriber notifier,
-        IActionPersistenceService<TAction> store,
+        IActionQueuePersistenceService store,
         IServiceScopeFactory scopeFactory,
         ILogger<ActionQueue<TAction>> logger)
     {
@@ -108,7 +108,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
         if (_persisted)
         {
             var tasks = await _persistenceService
-                .GetExecutableTasksAsync(_queue, cancellationToken)
+                .GetExecutableTasksAsync<TAction>(_queue, cancellationToken)
                 .ConfigureAwait(false);
 
             if (tasks != null && tasks.Count > 0)
@@ -159,7 +159,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
                     {
                         try
                         {
-                            await _persistenceService.DeleteTaskAsync(id, CancellationToken.None).ConfigureAwait(false);
+                            await _persistenceService.DeleteTaskAsync(_queue, id, CancellationToken.None).ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {
@@ -190,7 +190,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
                     {
                         try
                         {
-                            await _persistenceService.DeleteTaskAsync(id, CancellationToken.None).ConfigureAwait(false);
+                            await _persistenceService.DeleteTaskAsync(_queue, id, CancellationToken.None).ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {
