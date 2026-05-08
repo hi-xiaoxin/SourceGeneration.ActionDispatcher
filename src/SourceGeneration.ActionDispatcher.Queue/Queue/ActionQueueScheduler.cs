@@ -86,8 +86,8 @@ internal class ActionQueueScheduler<TAction>(
             // 更新索引（在锁内添加映射，确保一致性）      
             foreach (var t in tasks)
             {
-                var id = _idSelector(t.Action);
-                _scheduledIndexById.TryAdd(id, scheduledMs);
+                var key = _idSelector(t.Action);
+                _scheduledIndexById.TryAdd(key, scheduledMs);
             }
 
             if (!previousEarliest.HasValue || scheduledMs < previousEarliest.Value)
@@ -103,7 +103,7 @@ internal class ActionQueueScheduler<TAction>(
         }
     }
 
-    public bool Cancel(object taskId)
+    public bool Cancel(object key)
     {
         if (_persisted)
         {
@@ -112,21 +112,21 @@ internal class ActionQueueScheduler<TAction>(
             {
                 try
                 {
-                    await store.DeleteAsync(_queue, taskId, CancellationToken.None).ConfigureAwait(false);
+                    await store.DeleteAsync(_queue, key, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
                     if (_logger.IsEnabled(LogLevel.Warning))
-                        _logger.LogWarning(ex, "取消计划任务时删除持久化失败，taskId={TaskId}", taskId);
+                        _logger.LogWarning(ex, "取消计划任务时删除持久化失败，taskId={TaskId}", key);
                 }
             });
         }
 
         // 先尝试从 scheduledIndex 快速定位并移除
-        if (!_scheduledIndexById.TryRemove(taskId, out var scheduledAt))
+        if (!_scheduledIndexById.TryRemove(key, out var scheduledAt))
         {
             // 可能已入队或在运行，转发给底层 queue
-            return queue.Cancel(taskId);
+            return queue.Cancel(key);
         }
 
         ActionQueueTask<TAction>? removed = null;
@@ -139,7 +139,7 @@ internal class ActionQueueScheduler<TAction>(
                     removed = list[i];
                     var id = _idSelector(removed.Action);
 
-                    if (id.Equals(taskId))
+                    if (id.Equals(key))
                     {
                         list.RemoveAt(i);
                         break;
