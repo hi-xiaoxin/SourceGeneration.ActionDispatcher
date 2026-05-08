@@ -7,7 +7,7 @@
 		<LangVersion>14</LangVersion>
 		<RootNamespace>SourceGeneration.ActionDispatcher</RootNamespace>
 
-		<Version>2.0.0-beta250424</Version>
+		<Version>2.0.0-beta260508</Version>
 
 		<Authors>SourceGeneration</Authors>
 		<Description>Action dispatch and subscribe framework</Description>
