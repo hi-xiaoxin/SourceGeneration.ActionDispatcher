@@ -7,27 +7,18 @@ using System.Threading.Channels;
 
 namespace SourceGeneration.ActionDispatcher.Queue;
 
-public class ActionQueueOptions<TAction>
-{
-    public string? QueueName { get; set; }
-    public bool IsPersisted { get; set; } = true;
-    public int MaxConcurrency { get; set; }
-    public Func<TAction, object> IdSelector { get; set; } = null!;
-}
-
 internal class ActionQueue<TAction> : IHostedService where TAction : notnull
 {
     private readonly ActionSubscriber _notifier;
-    private readonly Channel<TAction> _channel;
+    private readonly Channel<object> _channel;
     private readonly ConcurrentDictionary<object, ActionBackgroundTask<TAction>> _runningsById = new();
 
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IActionQueuePersistenceService _persistenceService;
+    private readonly IActionQueuePersistenceService _store;
     private readonly ILogger<ActionQueue<TAction>> _logger;
     private readonly int _maxConcurrency;
     private readonly bool _persisted;
     private readonly string? _queue;
-    private readonly Func<TAction, object> _idSelector;
 
     private CancellationTokenSource? _stoppingCts;
     private Task[]? _workers;
@@ -42,13 +33,12 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
         _notifier = notifier;
         _logger = logger;
         _scopeFactory = scopeFactory;
-        _persistenceService = store;
+        _store = store;
         _maxConcurrency = Math.Max(1, options.MaxConcurrency);
         _persisted = options.IsPersisted;
         _queue = options.QueueName;
-        _idSelector = options.IdSelector ?? (static x => x);
 
-        _channel = Channel.CreateUnbounded<TAction>(new UnboundedChannelOptions
+        _channel = Channel.CreateUnbounded<object>(new UnboundedChannelOptions
         {
             SingleReader = _maxConcurrency == 1,
             SingleWriter = false,
@@ -63,7 +53,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
         if (_runningsById.TryRemove(taskId, out var task))
         {
             task.Cancel();
-            _notifier.Notify(DispatchStatus.Canceled, task.Data);
+            _notifier.Notify(DispatchStatus.Canceled, task.Action);
             return true;
         }
         return false;
@@ -81,21 +71,20 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
     //    await EnqueueCoreAsync(tasks).ConfigureAwait(false);
     //}
 
-    internal async Task EnqueueCoreAsync(IReadOnlyList<PersistedActionTask<TAction>> tasks)
+    internal async Task EnqueueCoreAsync(IReadOnlyList<ActionTask<TAction>> tasks)
     {
         foreach (var task in tasks)
         {
-            var action = task.Action;
-            var id = _idSelector(action);
             var backgroundTask = new ActionBackgroundTask<TAction>(task);
 
-            if (_runningsById.TryAdd(id, backgroundTask))
+            var key = task.Key;
+            if (_runningsById.TryAdd(key, backgroundTask))
             {
                 backgroundTask.SetStatus(DispatchStatus.WaitingToRun);
-                _notifier.Notify(DispatchStatus.WaitingToRun, action);
+                _notifier.Notify(DispatchStatus.WaitingToRun, task.Action);
 
-                if (!_channel.Writer.TryWrite(action))
-                    await _channel.Writer.WriteAsync(action).ConfigureAwait(false);
+                if (!_channel.Writer.TryWrite(key))
+                    await _channel.Writer.WriteAsync(key).ConfigureAwait(false);
             }
         }
     }
@@ -104,18 +93,6 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
     {
         _stoppingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _workers = [.. Enumerable.Range(0, _maxConcurrency).Select(_ => WorkerLoopAsync(_stoppingCts.Token))];
-        
-        if (_persisted)
-        {
-            var tasks = await _persistenceService
-                .GetExecutableTasksAsync<TAction>(_queue, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (tasks != null && tasks.Count > 0)
-            {
-                await EnqueueCoreAsync(tasks).ConfigureAwait(false);
-            }
-        }
     }
 
     private static readonly TimeSpan _shutdownTimeout = TimeSpan.FromSeconds(5);
@@ -148,24 +125,22 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
     {
         try
         {
-            await foreach (var action in _channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            await foreach (var key in _channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
-                var id = _idSelector(action);
-
-                if (!_runningsById.TryRemove(id, out var task) || task!.Status != DispatchStatus.WaitingToRun)
+                if (!_runningsById.TryRemove(key, out var task) || task!.Status != DispatchStatus.WaitingToRun)
                 {
                     // 若任务已被移除或标记为取消，则直接尝试清理持久化并跳过执行
                     if (_persisted)
                     {
                         try
                         {
-                            await _persistenceService.DeleteTaskAsync(_queue, id, CancellationToken.None).ConfigureAwait(false);
+                            await _store.DeleteAsync(_queue, key, CancellationToken.None).ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {
                             if (_logger.IsEnabled(LogLevel.Warning))
                             {
-                                _logger.LogWarning(ex, "跳过已取消任务时删除持久化失败，ID={id}", id);
+                                _logger.LogWarning(ex, "跳过已取消任务时删除持久化失败，ID={id}", key);
                             }
                         }
                     }
@@ -173,7 +148,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
                 }
 
                 // business mapping already removed in TryRemoveById
-                
+
                 try
                 {
                     await task.InternalExecuteAsync(_scopeFactory, cancellationToken).ConfigureAwait(false);
@@ -182,7 +157,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
                 catch (Exception ex)
                 {
                     if (_logger.IsEnabled(LogLevel.Error))
-                        _logger.LogError(ex, "执行任务时发生未处理异常，任务Id={TaskId}", action);
+                        _logger.LogError(ex, "执行任务时发生未处理异常，任务Id={TaskId}", task.Action);
                 }
                 finally
                 {
@@ -190,12 +165,12 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
                     {
                         try
                         {
-                            await _persistenceService.DeleteTaskAsync(_queue, id, CancellationToken.None).ConfigureAwait(false);
+                            await _store.DeleteAsync(_queue, key, CancellationToken.None).ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {
                             if (_logger.IsEnabled(LogLevel.Warning))
-                                _logger.LogWarning(ex, "清理任务持久化时发送异常，任务Id={TaskId}", action);
+                                _logger.LogWarning(ex, "清理任务持久化时发送异常，任务Id={TaskId}", task.Action);
                         }
                     }
                 }

@@ -20,12 +20,12 @@ internal class ActionQueueScheduler<TAction>(
     private readonly ILogger<ActionQueueScheduler<TAction>> _logger = logger;
     private readonly ActionSubscriber _notifier = notifier;
     private readonly PriorityQueue<long, long> _pq = new();
-    private readonly Dictionary<long, List<PersistedActionTask<TAction>>> _scheduledMap = [];
+    private readonly Dictionary<long, List<ActionTask<TAction>>> _scheduledMap = [];
     private readonly ConcurrentDictionary<object, long> _scheduledIndexById = new();
 
     private readonly bool _persisted = options.IsPersisted;
     private readonly string? _queue = options.QueueName;
-    private readonly Func<TAction, object> _idSelector = options.IdSelector ?? (static x => x);
+    private readonly Func<TAction, object> _idSelector = options.KeySelector ?? (static x => x);
 
     private readonly AsyncAutoResetEvent _signal = new(false);
     private CancellationTokenSource? _stoppingCts;
@@ -38,7 +38,7 @@ internal class ActionQueueScheduler<TAction>(
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        var tasks = items.Select(x => new PersistedActionTask<TAction>
+        var tasks = items.Select(x => new ActionTask<TAction>
         {
             Key = _idSelector(x),
             Action = x,
@@ -49,7 +49,7 @@ internal class ActionQueueScheduler<TAction>(
 
         if (_persisted)
         {
-            await store.SaveTaskAsync(tasks).ConfigureAwait(false);
+            await store.SaveAsync(tasks).ConfigureAwait(false);
         }
 
         if (scheduledMs <= now)
@@ -62,7 +62,7 @@ internal class ActionQueueScheduler<TAction>(
         }
     }
 
-    private async ValueTask ScheduleCoreAsync(List<PersistedActionTask<TAction>> tasks, long scheduledMs)
+    private async ValueTask ScheduleCoreAsync(List<ActionTask<TAction>> tasks, long scheduledMs)
     {
         bool shouldWake = false;
 
@@ -77,7 +77,7 @@ internal class ActionQueueScheduler<TAction>(
 
             if (!_scheduledMap.TryGetValue(scheduledMs, out var list))
             {
-                list = new List<PersistedActionTask<TAction>>(tasks.Count);
+                list = new List<ActionTask<TAction>>(tasks.Count);
                 _scheduledMap[scheduledMs] = list;
                 _pq.Enqueue(scheduledMs, scheduledMs);
             }
@@ -112,7 +112,7 @@ internal class ActionQueueScheduler<TAction>(
             {
                 try
                 {
-                    await store.DeleteTaskAsync(_queue, taskId, CancellationToken.None).ConfigureAwait(false);
+                    await store.DeleteAsync(_queue, taskId, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -129,7 +129,7 @@ internal class ActionQueueScheduler<TAction>(
             return queue.Cancel(taskId);
         }
 
-        PersistedActionTask<TAction>? removed = null;
+        ActionTask<TAction>? removed = null;
         lock (_lock)
         {
             if (_scheduledMap.TryGetValue(scheduledAt, out var list))
@@ -172,12 +172,22 @@ internal class ActionQueueScheduler<TAction>(
 
         if (_persisted)
         {
-            var tasks = await store.GetScheduledTasksAsync<TAction>(_queue, cancellationToken).ConfigureAwait(false);
+            var tasks = await store.GetTasksAsync<TAction>(_queue, cancellationToken).ConfigureAwait(false);
             if (tasks != null && tasks.Count > 0)
             {
+                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
                 foreach (var group in tasks.GroupBy(x => x.ScheduledMs).OrderBy(x => x.Key))
                 {
-                    await ScheduleCoreAsync([.. group], group.Key).ConfigureAwait(false);
+                    var scheduledMs = group.Key;
+                    if (scheduledMs <= now)
+                    {
+                        await queue.EnqueueCoreAsync([.. group]).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await ScheduleCoreAsync([.. group], group.Key).ConfigureAwait(false);
+                    }
                 }
             }
         }
@@ -216,7 +226,7 @@ internal class ActionQueueScheduler<TAction>(
         while (!cancellationToken.IsCancellationRequested)
         {
             long? waitUntil = null;
-            List<List<PersistedActionTask<TAction>>>? listsToFire = null;
+            List<List<ActionTask<TAction>>>? listsToFire = null;
 
             lock (_lock)
             {
@@ -238,7 +248,7 @@ internal class ActionQueueScheduler<TAction>(
 
                         if (timesToRemove.Count > 0)
                         {
-                            listsToFire = new List<List<PersistedActionTask<TAction>>>(timesToRemove.Count);
+                            listsToFire = new List<List<ActionTask<TAction>>>(timesToRemove.Count);
                             foreach (var t in timesToRemove)
                             {
                                 if (_scheduledMap.TryGetValue(t, out var list))
@@ -256,7 +266,7 @@ internal class ActionQueueScheduler<TAction>(
             if (listsToFire != null && listsToFire.Count > 0)
             {
                 // 在锁外合并并触发，减少临界区时间
-                List<PersistedActionTask<TAction>> toFire = [];
+                List<ActionTask<TAction>> toFire = [];
                 foreach (var l in listsToFire)
                     toFire.AddRange(l);
 
