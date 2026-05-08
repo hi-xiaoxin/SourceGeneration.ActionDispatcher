@@ -1,0 +1,4 @@
+﻿[*.cs]
+
+# IDE0011: 添加大括号
+dotnet_diagnostic.IDE0011.severity = none
