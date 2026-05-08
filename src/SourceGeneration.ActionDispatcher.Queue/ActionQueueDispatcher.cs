@@ -9,7 +9,7 @@ public static class ActionQueueDispatcher
     {
         public void Cancel<TAction>(object id) where TAction : notnull
         {
-            dispatcher.Services.GetRequiredService<IActionScheduledQueue<TAction>>().Cancel(id);
+            dispatcher.Services.GetRequiredService<IActionQueueScheduler<TAction>>().Cancel(id);
         }
 
         public ValueTask EnqueueAsync<TAction>(TAction action) where TAction : notnull => dispatcher.ScheduleAsync(action, scheduledMs: 0);
@@ -17,22 +17,22 @@ public static class ActionQueueDispatcher
 
         public ValueTask ScheduleAsync<TAction>(TAction action, DateTimeOffset scheduledAt) where TAction : notnull
         {
-            return dispatcher.Services.GetRequiredService<IActionScheduledQueue<TAction>>().ScheduleAsync([action], scheduledAt.ToUnixTimeMilliseconds());
+            return dispatcher.Services.GetRequiredService<IActionQueueScheduler<TAction>>().ScheduleAsync([action], scheduledAt.ToUnixTimeMilliseconds());
         }
 
         public ValueTask ScheduleAsync<TAction>(TAction[] actions, DateTimeOffset scheduledAt) where TAction : notnull
         {
-            return dispatcher.Services.GetRequiredService<IActionScheduledQueue<TAction>>().ScheduleAsync(actions, scheduledAt.ToUnixTimeMilliseconds());
+            return dispatcher.Services.GetRequiredService<IActionQueueScheduler<TAction>>().ScheduleAsync(actions, scheduledAt.ToUnixTimeMilliseconds());
         }
 
         public ValueTask ScheduleAsync<TAction>(TAction action, long scheduledMs = 0) where TAction : notnull
         {
-            return dispatcher.Services.GetRequiredService<IActionScheduledQueue<TAction>>().ScheduleAsync([action], scheduledMs);
+            return dispatcher.Services.GetRequiredService<IActionQueueScheduler<TAction>>().ScheduleAsync([action], scheduledMs);
         }
 
         public ValueTask ScheduleAsync<TAction>(TAction[] actions, long scheduledMs = 0) where TAction : notnull
         {
-            return dispatcher.Services.GetRequiredService<IActionScheduledQueue<TAction>>().ScheduleAsync(actions, scheduledMs);
+            return dispatcher.Services.GetRequiredService<IActionQueueScheduler<TAction>>().ScheduleAsync(actions, scheduledMs);
         }
     }
 }
