@@ -2,7 +2,7 @@
 
 namespace SourceGeneration.ActionDispatcher.Queue;
 
-internal sealed class ActionBackgroundTask<TAction>(ActionTask<TAction> task) where TAction : notnull
+internal sealed class ActionBackgroundTask<TAction>(ActionQueueTask<TAction> task) where TAction : notnull
 {
     private CancellationTokenSource? _cts;
     private readonly Lock _lock = new();

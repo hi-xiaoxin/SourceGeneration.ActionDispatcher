@@ -2,8 +2,8 @@
 
 public interface IActionQueuePersistenceService
 {
-    Task SaveAsync<TAction>(IEnumerable<ActionTask<TAction>> tasks, CancellationToken cancellationToken = default) where TAction : notnull;
-    Task<List<ActionTask<TAction>>> GetTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull;
+    Task SaveAsync<TAction>(IEnumerable<ActionQueueTask<TAction>> tasks, CancellationToken cancellationToken = default) where TAction : notnull;
+    Task<List<ActionQueueTask<TAction>>> GetTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull;
     Task DeleteAsync(string? queueName, object id, CancellationToken cancellationToken = default);
 }
 
@@ -14,12 +14,12 @@ internal sealed class ActionQueueNopPersistenceService : IActionQueuePersistence
         return Task.CompletedTask;
     }
 
-    public Task<List<ActionTask<TAction>>> GetTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull
+    public Task<List<ActionQueueTask<TAction>>> GetTasksAsync<TAction>(string? queueName, CancellationToken cancellationToken = default) where TAction : notnull
     {
-        return Task.FromResult<List<ActionTask<TAction>>>([]);
+        return Task.FromResult<List<ActionQueueTask<TAction>>>([]);
     }
 
-    public Task SaveAsync<TAction>(IEnumerable<ActionTask<TAction>> tasks, CancellationToken cancellationToken = default) where TAction : notnull
+    public Task SaveAsync<TAction>(IEnumerable<ActionQueueTask<TAction>> tasks, CancellationToken cancellationToken = default) where TAction : notnull
     {
         return Task.CompletedTask;
     }

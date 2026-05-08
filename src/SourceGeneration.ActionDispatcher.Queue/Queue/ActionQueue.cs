@@ -71,7 +71,7 @@ internal class ActionQueue<TAction> : IHostedService where TAction : notnull
     //    await EnqueueCoreAsync(tasks).ConfigureAwait(false);
     //}
 
-    internal async Task EnqueueCoreAsync(IReadOnlyList<ActionTask<TAction>> tasks)
+    internal async Task EnqueueCoreAsync(List<ActionQueueTask<TAction>> tasks)
     {
         foreach (var task in tasks)
         {

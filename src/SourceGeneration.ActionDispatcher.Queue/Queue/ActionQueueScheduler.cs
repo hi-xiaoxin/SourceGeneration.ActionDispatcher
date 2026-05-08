@@ -20,7 +20,7 @@ internal class ActionQueueScheduler<TAction>(
     private readonly ILogger<ActionQueueScheduler<TAction>> _logger = logger;
     private readonly ActionSubscriber _notifier = notifier;
     private readonly PriorityQueue<long, long> _pq = new();
-    private readonly Dictionary<long, List<ActionTask<TAction>>> _scheduledMap = [];
+    private readonly Dictionary<long, List<ActionQueueTask<TAction>>> _scheduledMap = [];
     private readonly ConcurrentDictionary<object, long> _scheduledIndexById = new();
 
     private readonly bool _persisted = options.IsPersisted;
@@ -38,7 +38,7 @@ internal class ActionQueueScheduler<TAction>(
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        var tasks = items.Select(x => new ActionTask<TAction>
+        var tasks = items.Select(x => new ActionQueueTask<TAction>
         {
             Key = _idSelector(x),
             Action = x,
@@ -62,7 +62,7 @@ internal class ActionQueueScheduler<TAction>(
         }
     }
 
-    private async ValueTask ScheduleCoreAsync(List<ActionTask<TAction>> tasks, long scheduledMs)
+    private async ValueTask ScheduleCoreAsync(List<ActionQueueTask<TAction>> tasks, long scheduledMs)
     {
         bool shouldWake = false;
 
@@ -77,7 +77,7 @@ internal class ActionQueueScheduler<TAction>(
 
             if (!_scheduledMap.TryGetValue(scheduledMs, out var list))
             {
-                list = new List<ActionTask<TAction>>(tasks.Count);
+                list = new List<ActionQueueTask<TAction>>(tasks.Count);
                 _scheduledMap[scheduledMs] = list;
                 _pq.Enqueue(scheduledMs, scheduledMs);
             }
@@ -129,7 +129,7 @@ internal class ActionQueueScheduler<TAction>(
             return queue.Cancel(taskId);
         }
 
-        ActionTask<TAction>? removed = null;
+        ActionQueueTask<TAction>? removed = null;
         lock (_lock)
         {
             if (_scheduledMap.TryGetValue(scheduledAt, out var list))
@@ -180,13 +180,18 @@ internal class ActionQueueScheduler<TAction>(
                 foreach (var group in tasks.GroupBy(x => x.ScheduledMs).OrderBy(x => x.Key))
                 {
                     var scheduledMs = group.Key;
+                    var items = group.ToList();
+                    foreach (var item in items)
+                    {
+                        item.Key = _idSelector(item.Action);
+                    }
                     if (scheduledMs <= now)
                     {
-                        await queue.EnqueueCoreAsync([.. group]).ConfigureAwait(false);
+                        await queue.EnqueueCoreAsync(items).ConfigureAwait(false);
                     }
                     else
                     {
-                        await ScheduleCoreAsync([.. group], group.Key).ConfigureAwait(false);
+                        await ScheduleCoreAsync(items, group.Key).ConfigureAwait(false);
                     }
                 }
             }
@@ -226,7 +231,7 @@ internal class ActionQueueScheduler<TAction>(
         while (!cancellationToken.IsCancellationRequested)
         {
             long? waitUntil = null;
-            List<List<ActionTask<TAction>>>? listsToFire = null;
+            List<List<ActionQueueTask<TAction>>>? listsToFire = null;
 
             lock (_lock)
             {
@@ -248,7 +253,7 @@ internal class ActionQueueScheduler<TAction>(
 
                         if (timesToRemove.Count > 0)
                         {
-                            listsToFire = new List<List<ActionTask<TAction>>>(timesToRemove.Count);
+                            listsToFire = new List<List<ActionQueueTask<TAction>>>(timesToRemove.Count);
                             foreach (var t in timesToRemove)
                             {
                                 if (_scheduledMap.TryGetValue(t, out var list))
@@ -266,7 +271,7 @@ internal class ActionQueueScheduler<TAction>(
             if (listsToFire != null && listsToFire.Count > 0)
             {
                 // 在锁外合并并触发，减少临界区时间
-                List<ActionTask<TAction>> toFire = [];
+                List<ActionQueueTask<TAction>> toFire = [];
                 foreach (var l in listsToFire)
                     toFire.AddRange(l);
 
@@ -327,7 +332,7 @@ internal class ActionQueueScheduler<TAction>(
         public async Task WaitAsync(int millisecondsTimeout, CancellationToken cancellationToken)
         {
 #pragma warning disable CA1513 
-            if (_isDisposed) 
+            if (_isDisposed)
                 throw new ObjectDisposedException(nameof(AsyncAutoResetEvent));
 #pragma warning restore CA1513
 
