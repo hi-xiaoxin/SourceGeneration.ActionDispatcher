@@ -14,7 +14,7 @@ builder.Services.AddActionQueue<Action1>(options =>
 {
     options.MaxConcurrency = 30;
     options.IsPersisted = false;
-    options.IdSelector = x => x.Id;
+    options.KeySelector = x => x.Id;
 });
 
 builder.Services.AddScoped<IHandler, Handler>();

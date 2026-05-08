@@ -17,11 +17,11 @@ public sealed class QueueTest
             .AddActionDispatcher()
             .AddActionQueue<TestAction>(options =>
             {
-                options.IdSelector = x => x.Id;
+                options.KeySelector = x => x.Id;
             })
             .AddActionQueue<TimeAction>(options =>
             {
-                options.IdSelector = x => x.Id;
+                options.KeySelector = x => x.Id;
             })
             .AddActionQueue<KeylessAction>()
             .AddActionQueue<StringKeyAction>()
